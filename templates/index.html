@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FlashCards生成器</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .upload-area {
+            border: 2px dashed #ccc;
+            border-radius: 8px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .upload-area:hover {
+            border-color: #666;
+            background-color: #f8f8f8;
+        }
+        .upload-area.dragover {
+            border-color: #4CAF50;
+            background-color: #e8f5e9;
+        }
+        #fileInput {
+            display: none;
+        }
+        .btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s ease;
+            margin: 5px;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+            border: 1px solid #d6e9c6;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+            border: 1px solid #ebccd1;
+        }
+        .flashcards-container {
+            display: none;
+            margin-top: 30px;
+        }
+        .flashcard {
+            perspective: 1000px;
+            width: 100%;
+            max-width: 600px;
+            height: 300px;
+            margin: 20px auto;
+            position: relative;
+        }
+        .flashcard-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.8s;
+            transform-style: preserve-3d;
+            cursor: pointer;
+        }
+        .flashcard.flipped .flashcard-inner {
+            transform: rotateY(180deg);
+        }
+        .flashcard-front, .flashcard-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            background: white;
+        }
+        .flashcard-back {
+            transform: rotateY(180deg);
+            background: #f8f9fa;
+        }
+        .card-content {
+            max-width: 80%;
+            overflow-y: auto;
+            max-height: 200px;
+        }
+        .card-metadata {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            font-size: 0.8em;
+            color: #666;
+        }
+        .navigation {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-top: 20px;
+        }
+        .card-counter {
+            margin: 0 20px;
+            font-size: 1.2em;
+            color: #666;
+        }
+        .importance-indicator, .probability-indicator {
+            display: inline-block;
+            margin: 0 5px;
+        }
+        .indicator-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin: 0 2px;
+        }
+        .dot-filled {
+            background-color: #4CAF50;
+        }
+        .dot-empty {
+            border: 1px solid #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>FlashCards生成器</h1>
+        <div class="upload-area" id="dropZone">
+            <p>拖拽Markdown文件到这里或点击选择文件</p>
+            <input type="file" id="fileInput" accept=".md,.markdown">
+            <button class="btn" onclick="document.getElementById('fileInput').click()">选择文件</button>
+        </div>
+        <div id="status"></div>
+        
+        <div id="flashcardsContainer" class="flashcards-container">
+            <div class="flashcard" id="currentCard">
+                <div class="flashcard-inner">
+                    <div class="flashcard-front">
+                        <div class="card-content"></div>
+                        <div class="card-metadata">
+                            <div class="importance-indicator">
+                                重要性：<span class="indicator-dots"></span>
+                            </div>
+                            <div class="probability-indicator">
+                                考试概率：<span class="indicator-dots"></span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flashcard-back">
+                        <div class="card-content"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="navigation">
+                <button class="btn" onclick="previousCard()">上一个</button>
+                <span class="card-counter">0 / 0</span>
+                <button class="btn" onclick="nextCard()">下一个</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const status = document.getElementById('status');
+        const flashcardsContainer = document.getElementById('flashcardsContainer');
+        const currentCard = document.getElementById('currentCard');
+        
+        let currentCardIndex = 0;
+        let flashcards = [];
+
+        // Prevent default drag behaviors
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, highlight, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, unhighlight, false);
+        });
+
+        dropZone.addEventListener('drop', handleDrop, false);
+        fileInput.addEventListener('change', handleFiles, false);
+        currentCard.addEventListener('click', flipCard);
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function highlight(e) {
+            dropZone.classList.add('dragover');
+        }
+
+        function unhighlight(e) {
+            dropZone.classList.remove('dragover');
+        }
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles({target: {files: files}});
+        }
+
+        function handleFiles(e) {
+            const file = e.target.files[0];
+            if (file) {
+                uploadFile(file);
+            }
+        }
+
+        function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            showStatus('处理中...', true);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    flashcards = data.flashcards;
+                    currentCardIndex = 0;
+                    showStatus('FlashCards创建成功！', true);
+                    displayFlashcards();
+                } else {
+                    throw new Error(data.error || '处理失败');
+                }
+            })
+            .catch(error => {
+                showStatus(error.message, false);
+            });
+        }
+
+        function showStatus(message, isSuccess) {
+            status.textContent = message;
+            status.style.display = 'block';
+            status.className = isSuccess ? 'success' : 'error';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 5000);
+        }
+
+        function displayFlashcards() {
+            flashcardsContainer.style.display = 'block';
+            updateCardDisplay();
+        }
+
+        function updateCardDisplay() {
+            if (flashcards.length === 0) return;
+
+            const card = flashcards[currentCardIndex];
+            const frontContent = currentCard.querySelector('.flashcard-front .card-content');
+            const backContent = currentCard.querySelector('.flashcard-back .card-content');
+            const cardCounter = document.querySelector('.card-counter');
+
+            frontContent.innerHTML = card.question;
+            backContent.innerHTML = card.answer;
+            cardCounter.textContent = `${currentCardIndex + 1} / ${flashcards.length}`;
+
+            // Update importance and probability indicators
+            updateIndicators(card.importance, '.importance-indicator .indicator-dots');
+            updateIndicators(card.probability, '.probability-indicator .indicator-dots');
+
+            // Reset card flip
+            currentCard.classList.remove('flipped');
+        }
+
+        function updateIndicators(value, selector) {
+            const container = document.querySelector(selector);
+            container.innerHTML = '';
+            for (let i = 0; i < 5; i++) {
+                const dot = document.createElement('span');
+                dot.className = `indicator-dot ${i < value ? 'dot-filled' : 'dot-empty'}`;
+                container.appendChild(dot);
+            }
+        }
+
+        function flipCard() {
+            currentCard.classList.toggle('flipped');
+        }
+
+        function nextCard() {
+            if (currentCardIndex < flashcards.length - 1) {
+                currentCardIndex++;
+                updateCardDisplay();
+            }
+        }
+
+        function previousCard() {
+            if (currentCardIndex > 0) {
+                currentCardIndex--;
+                updateCardDisplay();
+            }
+        }
+    </script>
+</body>
+</html> 
