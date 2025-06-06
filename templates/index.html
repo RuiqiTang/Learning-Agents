@@ -3,338 +3,265 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FlashCards生成器</title>
+    <title>Markdown to Flashcards</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML"></script>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            max-width: 1200px;
+            font-family: Arial, sans-serif;
+            max-width: 800px;
             margin: 0 auto;
             padding: 20px;
             background-color: #f5f5f5;
         }
         .container {
             background-color: white;
-            padding: 30px;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1 {
-            color: #333;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .upload-area {
-            border: 2px dashed #ccc;
+            padding: 20px;
             border-radius: 8px;
-            padding: 40px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .upload-section {
             text-align: center;
             margin-bottom: 20px;
-            cursor: pointer;
-            transition: all 0.3s ease;
+            padding: 20px;
+            border: 2px dashed #ccc;
+            border-radius: 8px;
         }
-        .upload-area:hover {
-            border-color: #666;
-            background-color: #f8f8f8;
-        }
-        .upload-area.dragover {
-            border-color: #4CAF50;
-            background-color: #e8f5e9;
-        }
-        #fileInput {
-            display: none;
-        }
-        .btn {
-            background-color: #4CAF50;
-            color: white;
-            padding: 12px 24px;
-            border: none;
+        .progress-section {
+            margin: 20px 0;
+            padding: 10px;
             border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s ease;
-            margin: 5px;
-        }
-        .btn:hover {
-            background-color: #45a049;
-        }
-        #status {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 4px;
+            background-color: #f8f9fa;
             display: none;
+            text-align: center;
         }
-        .success {
-            background-color: #dff0d8;
-            color: #3c763d;
-            border: 1px solid #d6e9c6;
+        .loading-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
         }
-        .error {
-            background-color: #f2dede;
-            color: #a94442;
-            border: 1px solid #ebccd1;
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
-        .flashcards-container {
-            display: none;
-            margin-top: 30px;
+        .status-message {
+            color: #666;
+            margin: 10px 0;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        .timer {
+            color: #007bff;
+            font-weight: bold;
+            margin-left: 10px;
         }
         .flashcard {
-            perspective: 1000px;
-            width: 100%;
-            max-width: 600px;
-            height: 300px;
-            margin: 20px auto;
-            position: relative;
+            border: 1px solid #ddd;
+            margin: 10px 0;
+            padding: 15px;
+            border-radius: 4px;
+            background-color: white;
         }
-        .flashcard-inner {
-            position: relative;
-            width: 100%;
-            height: 100%;
-            text-align: center;
-            transition: transform 0.8s;
-            transform-style: preserve-3d;
+        .flashcard-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            color: #666;
+        }
+        .flashcard-content {
+            margin-top: 10px;
+        }
+        .error-message {
+            color: #dc3545;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #dc3545;
+            border-radius: 4px;
+            display: none;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
             cursor: pointer;
         }
-        .flashcard.flipped .flashcard-inner {
-            transform: rotateY(180deg);
-        }
-        .flashcard-front, .flashcard-back {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            backface-visibility: hidden;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-            background: white;
-        }
-        .flashcard-back {
-            transform: rotateY(180deg);
-            background: #f8f9fa;
-        }
-        .card-content {
-            max-width: 80%;
-            overflow-y: auto;
-            max-height: 200px;
-        }
-        .card-metadata {
-            position: absolute;
-            bottom: 10px;
-            right: 10px;
-            font-size: 0.8em;
-            color: #666;
-        }
-        .navigation {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-top: 20px;
-        }
-        .card-counter {
-            margin: 0 20px;
-            font-size: 1.2em;
-            color: #666;
-        }
-        .importance-indicator, .probability-indicator {
-            display: inline-block;
-            margin: 0 5px;
-        }
-        .indicator-dot {
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            margin: 0 2px;
-        }
-        .dot-filled {
-            background-color: #4CAF50;
-        }
-        .dot-empty {
-            border: 1px solid #4CAF50;
+        button:hover {
+            background-color: #0056b3;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>FlashCards生成器</h1>
-        <div class="upload-area" id="dropZone">
-            <p>拖拽Markdown文件到这里或点击选择文件</p>
-            <input type="file" id="fileInput" accept=".md,.markdown">
-            <button class="btn" onclick="document.getElementById('fileInput').click()">选择文件</button>
-        </div>
-        <div id="status"></div>
+        <h1>Markdown to Flashcards</h1>
         
-        <div id="flashcardsContainer" class="flashcards-container">
-            <div class="flashcard" id="currentCard">
-                <div class="flashcard-inner">
-                    <div class="flashcard-front">
-                        <div class="card-content"></div>
-                        <div class="card-metadata">
-                            <div class="importance-indicator">
-                                重要性：<span class="indicator-dots"></span>
-                            </div>
-                            <div class="probability-indicator">
-                                考试概率：<span class="indicator-dots"></span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flashcard-back">
-                        <div class="card-content"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="navigation">
-                <button class="btn" onclick="previousCard()">上一个</button>
-                <span class="card-counter">0 / 0</span>
-                <button class="btn" onclick="nextCard()">下一个</button>
-            </div>
+        <div class="upload-section">
+            <form id="uploadForm">
+                <input type="file" id="fileInput" accept=".md,.markdown" style="display: none;">
+                <button type="button" onclick="document.getElementById('fileInput').click()">选择Markdown文件</button>
+                <button type="submit">上传并生成闪卡</button>
+            </form>
         </div>
+
+        <div class="progress-section">
+            <div class="status-message"></div>
+            <span class="timer">00:00</span>
+            <div class="loading-spinner"></div>
+        </div>
+
+        <div class="error-message"></div>
+
+        <div id="flashcardsContainer"></div>
     </div>
 
     <script>
-        const dropZone = document.getElementById('dropZone');
-        const fileInput = document.getElementById('fileInput');
-        const status = document.getElementById('status');
-        const flashcardsContainer = document.getElementById('flashcardsContainer');
-        const currentCard = document.getElementById('currentCard');
-        
-        let currentCardIndex = 0;
-        let flashcards = [];
+        let timerInterval;
+        let startTime;
 
-        // Prevent default drag behaviors
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, preventDefaults, false);
-            document.body.addEventListener(eventName, preventDefaults, false);
-        });
-
-        ['dragenter', 'dragover'].forEach(eventName => {
-            dropZone.addEventListener(eventName, highlight, false);
-        });
-
-        ['dragleave', 'drop'].forEach(eventName => {
-            dropZone.addEventListener(eventName, unhighlight, false);
-        });
-
-        dropZone.addEventListener('drop', handleDrop, false);
-        fileInput.addEventListener('change', handleFiles, false);
-        currentCard.addEventListener('click', flipCard);
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
+        function startTimer() {
+            startTime = Date.now();
+            const timerElement = document.querySelector('.timer');
+            
+            timerInterval = setInterval(() => {
+                const elapsedTime = Date.now() - startTime;
+                const seconds = Math.floor(elapsedTime / 1000);
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = seconds % 60;
+                
+                timerElement.textContent = `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            }, 1000);
         }
 
-        function highlight(e) {
-            dropZone.classList.add('dragover');
-        }
-
-        function unhighlight(e) {
-            dropZone.classList.remove('dragover');
-        }
-
-        function handleDrop(e) {
-            const dt = e.dataTransfer;
-            const files = dt.files;
-            handleFiles({target: {files: files}});
-        }
-
-        function handleFiles(e) {
-            const file = e.target.files[0];
-            if (file) {
-                uploadFile(file);
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
             }
         }
 
-        function uploadFile(file) {
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('fileInput');
+            if (!fileInput.files.length) {
+                showError('请选择一个文件');
+                return;
+            }
+
+            const file = fileInput.files[0];
             const formData = new FormData();
             formData.append('file', file);
 
-            showStatus('处理中...', true);
+            // 重置显示状态
+            document.querySelector('.progress-section').style.display = 'block';
+            document.querySelector('.status-message').textContent = '';
+            document.querySelector('.error-message').style.display = 'none';
+            document.getElementById('flashcardsContainer').innerHTML = '';
+            
+            // 启动计时器
+            startTimer();
 
-            fetch('/upload', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    flashcards = data.flashcards;
-                    currentCardIndex = 0;
-                    showStatus('FlashCards创建成功！', true);
-                    displayFlashcards();
-                } else {
-                    throw new Error(data.error || '处理失败');
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const {value, done} = await reader.read();
+                    if (done) break;
+
+                    const text = decoder.decode(value);
+                    const messages = text.split('\n').filter(msg => msg.trim());
+
+                    for (const msg of messages) {
+                        try {
+                            const data = JSON.parse(msg);
+                            handleStreamMessage(data);
+                        } catch (e) {
+                            console.error('Error parsing message:', msg);
+                        }
+                    }
                 }
-            })
-            .catch(error => {
-                showStatus(error.message, false);
-            });
+            } catch (error) {
+                showError('上传失败: ' + error.message);
+                stopTimer();
+            }
+        });
+
+        function handleStreamMessage(data) {
+            switch (data.type) {
+                case 'status':
+                    document.querySelector('.status-message').textContent = data.data;
+                    break;
+                
+                case 'result':
+                    stopTimer();
+                    displayFlashcards(data.data);
+                    document.querySelector('.progress-section').style.display = 'none';
+                    break;
+                
+                case 'error':
+                    stopTimer();
+                    showError(data.data);
+                    document.querySelector('.progress-section').style.display = 'none';
+                    break;
+            }
         }
 
-        function showStatus(message, isSuccess) {
-            status.textContent = message;
-            status.style.display = 'block';
-            status.className = isSuccess ? 'success' : 'error';
-            setTimeout(() => {
-                status.style.display = 'none';
-            }, 5000);
-        }
-
-        function displayFlashcards() {
-            flashcardsContainer.style.display = 'block';
-            updateCardDisplay();
-        }
-
-        function updateCardDisplay() {
-            if (flashcards.length === 0) return;
-
-            const card = flashcards[currentCardIndex];
-            const frontContent = currentCard.querySelector('.flashcard-front .card-content');
-            const backContent = currentCard.querySelector('.flashcard-back .card-content');
-            const cardCounter = document.querySelector('.card-counter');
-
-            frontContent.innerHTML = card.question;
-            backContent.innerHTML = card.answer;
-            cardCounter.textContent = `${currentCardIndex + 1} / ${flashcards.length}`;
-
-            // Update importance and probability indicators
-            updateIndicators(card.importance, '.importance-indicator .indicator-dots');
-            updateIndicators(card.probability, '.probability-indicator .indicator-dots');
-
-            // Reset card flip
-            currentCard.classList.remove('flipped');
-        }
-
-        function updateIndicators(value, selector) {
-            const container = document.querySelector(selector);
+        function displayFlashcards(flashcards) {
+            const container = document.getElementById('flashcardsContainer');
             container.innerHTML = '';
-            for (let i = 0; i < 5; i++) {
-                const dot = document.createElement('span');
-                dot.className = `indicator-dot ${i < value ? 'dot-filled' : 'dot-empty'}`;
-                container.appendChild(dot);
+
+            flashcards.forEach((card, index) => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'flashcard';
+                cardElement.innerHTML = `
+                    <div class="flashcard-header">
+                        <span>卡片 #${index + 1}</span>
+                        <span>
+                            重要性: ${card.importance}/5 | 
+                            考试概率: ${card.probability}/5
+                        </span>
+                    </div>
+                    <div class="flashcard-content">
+                        <h3>问题:</h3>
+                        <div class="markdown">${marked(card.question)}</div>
+                        <h3>答案:</h3>
+                        <div class="markdown">${marked(card.answer)}</div>
+                    </div>
+                `;
+                container.appendChild(cardElement);
+            });
+
+            // 重新渲染数学公式
+            if (window.MathJax) {
+                MathJax.Hub.Queue(["Typeset", MathJax.Hub]);
             }
         }
 
-        function flipCard() {
-            currentCard.classList.toggle('flipped');
+        function showError(message) {
+            const errorElement = document.querySelector('.error-message');
+            errorElement.textContent = message;
+            errorElement.style.display = 'block';
         }
 
-        function nextCard() {
-            if (currentCardIndex < flashcards.length - 1) {
-                currentCardIndex++;
-                updateCardDisplay();
+        // 配置MathJax
+        window.MathJax = {
+            tex2jax: {
+                inlineMath: [['$','$'], ['\\(','\\)']],
+                processEscapes: true
             }
-        }
-
-        function previousCard() {
-            if (currentCardIndex > 0) {
-                currentCardIndex--;
-                updateCardDisplay();
-            }
-        }
+        };
     </script>
 </body>
 </html> 

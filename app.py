@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, request, render_template, jsonify, Response, stream_with_context
 from werkzeug.utils import secure_filename
 import json
 from openai import OpenAI
@@ -32,10 +32,11 @@ ALLOWED_EXTENSIONS = {'md', 'markdown'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def create_flashcards(markdown_content):
-    """Convert markdown content to flashcards using DeepSeek API"""
+def generate_flashcards_stream(markdown_content):
+    """Generate flashcards with streaming progress"""
     try:
-        prompt = """
+        prompt = \
+        """
         你是一个专业的数学和机器学习教育专家。请将以下Markdown笔记内容转换为FlashCards格式。
 
         要求：
@@ -52,18 +53,25 @@ def create_flashcards(markdown_content):
 
         示例输出格式：
         [
-            {
+            {{
                 "question": "什么是高斯过程(GP)的定义？",
                 "answer": "高斯过程(GP)是一个随机过程，其任何有限次实现集合都具有联合多元正态分布。数学表示为：$f(x) \\sim GP(\\mu(x), k(x, x'))$，其中：\\n- $\\mu(x)$ 是均值函数\\n- $k(x, x')$ 是协方差函数",
                 "importance": 5,
                 "probability": 4
-            }
+            }}
         ]
 
         笔记内容：
         {content}
         """.format(content=markdown_content)
 
+        # 发送开始消息
+        yield json.dumps({
+            'type': 'status',
+            'data': '正在生成闪卡...'
+        })
+
+        # 使用stream=True来获取实时响应
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
@@ -76,44 +84,49 @@ def create_flashcards(markdown_content):
                     "content": prompt
                 }
             ],
-            temperature=0.3,  # 降低温度以获得更确定性的输出
-            max_tokens=4000,  # 增加最大token以处理长文本
+            temperature=0.3,
+            max_tokens=4000,
             stream=False
         )
-        
-        # 获取响应内容
+        print("="*10,"response loaded","="*10)
+
+        # 合并所有内容
         content = response.choices[0].message.content
-        print("="*10,"content: ","="*10,"\n", content)
-        
-        # 确保返回的是有效的JSON字符串
+
+        # 处理JSON响应
         try:
-            # 尝试清理内容中的格式问题
+            # 清理内容
             content = content.strip()
             if content.startswith('```json'):
-                content = content[7:]
+                content = content[len("```json"):].strip()
             if content.endswith('```'):
-                content = content[:-3]
-            content = content.strip()
+                content = content[:-len("```")].strip()
+            content = content.lstrip('\ufeff')
+            content = content.replace('\\', '\\\\')
             
             flashcards = json.loads(content)
             if not isinstance(flashcards, list):
                 raise ValueError("Response is not a list")
-            return flashcards
-        except json.JSONDecodeError:
-            # 如果不是有效的JSON，尝试提取JSON部分
-            import re
-            json_match = re.search(r'\[\s*{.*}\s*\]', content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group())
-                except:
-                    raise ValueError("Could not parse JSON from response")
-            raise ValueError("Invalid JSON response")
+            
+            # 发送成功结果
+            yield json.dumps({
+                'type': 'result',
+                'data': flashcards
+            })
+
+        except Exception as e:
+            # 发送错误信息
+            yield json.dumps({
+                'type': 'error',
+                'data': str(e)
+            })
             
     except Exception as e:
-        print(f"Error creating flashcards: {str(e)}")
-        print(f"API Response: {content if 'content' in locals() else 'No content'}")
-        return []
+        # 发送错误信息
+        yield json.dumps({
+            'type': 'error',
+            'data': str(e)
+        })
 
 @app.route('/')
 def index():
@@ -136,24 +149,12 @@ def upload_file():
         # Read markdown content
         with open(file_path, 'r', encoding='utf-8') as f:
             markdown_content = f.read()
-        
-        # Create flashcards
-        flashcards = create_flashcards(markdown_content)
-        
-        if not flashcards:
-            return jsonify({'error': 'Failed to create flashcards'}), 500
-        
-        # Save flashcards
-        base_name = os.path.splitext(filename)[0]
-        flashcards_path = os.path.join(FLASHCARDS_FOLDER, f"{base_name}_flashcards.json")
-        with open(flashcards_path, 'w', encoding='utf-8') as f:
-            json.dump(flashcards, f, ensure_ascii=False, indent=2)
-        
-        return jsonify({
-            'success': True,
-            'message': 'Flashcards created successfully',
-            'flashcards': flashcards
-        })
+
+        # 返回流式响应
+        return Response(
+            stream_with_context(generate_flashcards_stream(markdown_content)),
+            mimetype='text/event-stream'
+        )
     
     return jsonify({'error': 'File type not allowed'}), 400
 
