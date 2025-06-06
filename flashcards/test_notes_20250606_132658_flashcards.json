@@ -1,0 +1,80 @@
+[
+  {
+    "question": "什么是哈密顿蒙特卡洛(HMC)中的总能量守恒性质？",
+    "answer": "HMC中的总能量守恒性质是指通过引入动量变量$r$作为辅助变量，与位置变量$x$一起更新，帮助快速遍历目标分布。假设$n$是$x$的索引，$m$是动量维度。HMC使用Metropolis框架对$(x, r)$进行采样，具有接受/拒绝概率，然后边际化获得$x$的样本。",
+    "importance": 4,
+    "probability": 4,
+    "learning_state": {
+      "ease_factor": 2.0500000000000003,
+      "interval": 3,
+      "last_review": "2025-06-06T05:49:55.074Z",
+      "next_review": "2025-06-09T05:49:55.074Z",
+      "review_count": 4
+    }
+  },
+  {
+    "question": "哈密顿蒙特卡洛(HMC)的基本组成部分是什么？",
+    "answer": "HMC由以下基本部分组成：\\n- 主要变量：位置变量$(x)$\\n- 辅助变量：动量变量$(r)$\\n- 哈密顿量$H(x, r)$，其中：\\n  * $U(x)$：势能（与目标分布相关）\\n  * $K(r)$：动能（例如$\\frac{1}{2}M^{-1}r^2$）\\n- 哈密顿量公式：$H(x, r) = U(x) + K(r)$",
+    "importance": 5,
+    "probability": 5,
+    "learning_state": {
+      "ease_factor": 1.7500000000000002,
+      "interval": 1,
+      "last_review": "2025-06-06T05:49:56.396Z",
+      "next_review": "2025-06-07T05:49:56.396Z",
+      "review_count": 3
+    }
+  },
+  {
+    "question": "哈密顿动力学的基本方程是什么？",
+    "answer": "哈密顿动力学的基本方程（无摩擦情况）为：\\n- $\\frac{dx}{dt} = \\frac{\\partial H}{\\partial r}$\\n- $\\frac{dr}{dt} = -\\frac{\\partial H}{\\partial x}$\\n这些连续动力学方程描述了系统随时间的演化。",
+    "importance": 5,
+    "probability": 5,
+    "learning_state": {
+      "ease_factor": 2.0500000000000003,
+      "interval": 3,
+      "last_review": "2025-06-06T05:46:13.955Z",
+      "next_review": "2025-06-09T05:46:13.955Z",
+      "review_count": 2
+    }
+  },
+  {
+    "question": "如何将哈密顿连续动力学离散化？",
+    "answer": "通过欧拉离散化将连续动力学转换为离散形式：\\n$(x(t), r(t)) \\rightarrow (x(t+\\epsilon), r(t+\\epsilon))$\\n虽然形式简单，但误差不易控制。",
+    "importance": 3,
+    "probability": 3,
+    "learning_state": {
+      "review_count": 1,
+      "last_review": "2025-06-06T05:34:54.709Z",
+      "next_review": "2025-06-07T05:34:54.709Z",
+      "ease_factor": 2.2,
+      "interval": 1
+    }
+  },
+  {
+    "question": "请解释一维情况下哈密顿量的例子及其解",
+    "answer": "一维例子：$H(x,r) = \\frac{r^2}{2} + \\frac{x^2}{2}$\\n解为：\\n- $\\frac{dx}{dt} = r \\Rightarrow x(t) = \\rho \\cdot \\cos(a+t)$\\n- $\\frac{dr}{dt} = -x \\Rightarrow r(t) = -\\rho \\cdot \\sin(a+t)$\\n水平集为$H(x,r) = \\frac{1}{2}\\rho^2$，表示能量守恒。",
+    "importance": 4,
+    "probability": 4,
+    "learning_state": {
+      "review_count": 1,
+      "last_review": "2025-06-06T05:34:54.923Z",
+      "next_review": "2025-06-09T05:34:54.923Z",
+      "ease_factor": 2.35,
+      "interval": 3
+    }
+  },
+  {
+    "question": "HMC如何与Metropolis-Hastings算法结合使用？",
+    "answer": "HMC使用Metropolis-Hastings框架采样$(x,r)$，其联合密度为：\\n$P(x,r) = P(x)P(r|x)P(x|r,M)$\\n然后边际化收集$x$的样本，得到目标分布$P(x)$。",
+    "importance": 5,
+    "probability": 5,
+    "learning_state": {
+      "review_count": 1,
+      "last_review": "2025-06-06T05:34:55.198Z",
+      "next_review": "2025-06-09T05:34:55.198Z",
+      "ease_factor": 2.35,
+      "interval": 3
+    }
+  }
+]

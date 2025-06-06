@@ -6,6 +6,30 @@
     <title>Markdown to Flashcards</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+    <script>
+        // 配置MathJax
+        window.MathJax = {
+            tex2jax: {
+                inlineMath: [['$','$'], ['\\(','\\)']],
+                displayMath: [['$$','$$'], ['\\[','\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            CommonHTML: { linebreaks: { automatic: true } },
+            "HTML-CSS": { linebreaks: { automatic: true } },
+            SVG: { linebreaks: { automatic: true } }
+        };
+
+        // 配置marked
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            pedantic: false,
+            sanitize: false,
+            smartLists: true,
+            smartypants: false
+        });
+    </script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -85,6 +109,14 @@
             border-radius: 4px;
             display: none;
         }
+        .success-message {
+            color: #28a745;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            display: none;
+        }
         button {
             background-color: #007bff;
             color: white;
@@ -95,6 +127,15 @@
         }
         button:hover {
             background-color: #0056b3;
+        }
+        /* 添加数学公式样式 */
+        .MathJax {
+            overflow-x: auto;
+            max-width: 100%;
+        }
+        .markdown {
+            overflow-x: auto;
+            max-width: 100%;
         }
     </style>
 </head>
@@ -117,6 +158,7 @@
         </div>
 
         <div class="error-message"></div>
+        <div class="success-message"></div>
 
         <div id="flashcardsContainer"></div>
     </div>
@@ -206,8 +248,8 @@
                 
                 case 'result':
                     stopTimer();
-                    displayFlashcards(data.data);
-                    document.querySelector('.progress-section').style.display = 'none';
+                    // 重定向到练习页面
+                    window.location.href = `/practice/${data.filename}`;
                     break;
                 
                 case 'error':
@@ -254,14 +296,6 @@
             errorElement.textContent = message;
             errorElement.style.display = 'block';
         }
-
-        // 配置MathJax
-        window.MathJax = {
-            tex2jax: {
-                inlineMath: [['$','$'], ['\\(','\\)']],
-                processEscapes: true
-            }
-        };
     </script>
 </body>
 </html> 

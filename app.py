@@ -4,6 +4,8 @@ from werkzeug.utils import secure_filename
 import json
 from openai import OpenAI
 from dotenv import load_dotenv
+from datetime import datetime
+import glob
 
 app = Flask(__name__)
 
@@ -32,9 +34,64 @@ ALLOWED_EXTENSIONS = {'md', 'markdown'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def generate_flashcards_stream(markdown_content):
+def find_existing_flashcards(filename):
+    """Find existing flashcards file for the given markdown filename"""
+    base_name = os.path.splitext(filename)[0]
+    pattern = os.path.join(FLASHCARDS_FOLDER, f"{base_name}_*.json")
+    files = glob.glob(pattern)
+    
+    if files:
+        # 返回最新的文件
+        latest_file = max(files, key=os.path.getctime)
+        with open(latest_file, 'r', encoding='utf-8') as f:
+            return json.load(f), os.path.basename(latest_file)
+    
+    return None, None
+
+def save_flashcards(original_filename, flashcards):
+    """Save flashcards to a JSON file"""
+    base_name = os.path.splitext(original_filename)[0]
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    filename = f"{base_name}_{timestamp}_flashcards.json"
+    filepath = os.path.join(FLASHCARDS_FOLDER, filename)
+    
+    # 在保存前处理数据
+    processed_flashcards = []
+    for card in flashcards:
+        processed_card = {
+            'question': card['question'].strip().replace('\n', ' '),
+            'answer': card['answer'].strip().replace('\n', ' '),
+            'importance': card['importance'],
+            'probability': card['probability'],
+            'learning_state': card['learning_state']
+        }
+        processed_flashcards.append(processed_card)
+    
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(processed_flashcards, f, ensure_ascii=False, indent=2)
+    
+    return filename
+
+def generate_flashcards_stream(markdown_content, original_filename):
     """Generate flashcards with streaming progress"""
     try:
+        # 首先检查是否存在现有的闪卡文件
+        existing_flashcards, existing_filename = find_existing_flashcards(original_filename)
+        if existing_flashcards:
+            yield json.dumps({
+                'type': 'result',
+                'data': existing_flashcards,
+                'filename': existing_filename,
+                'message': '从现有文件加载闪卡'
+            })
+            return
+
+        # 如果没有现有文件，生成新的闪卡
+        yield json.dumps({
+            'type': 'status',
+            'data': '正在生成闪卡...'
+        })
+
         prompt = \
         """
         你是一个专业的数学和机器学习教育专家。请将以下Markdown笔记内容转换为FlashCards格式。
@@ -65,13 +122,6 @@ def generate_flashcards_stream(markdown_content):
         {content}
         """.format(content=markdown_content)
 
-        # 发送开始消息
-        yield json.dumps({
-            'type': 'status',
-            'data': '正在生成闪卡...'
-        })
-
-        # 使用stream=True来获取实时响应
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
@@ -90,12 +140,9 @@ def generate_flashcards_stream(markdown_content):
         )
         print("="*10,"response loaded","="*10)
 
-        # 合并所有内容
         content = response.choices[0].message.content
 
-        # 处理JSON响应
         try:
-            # 清理内容
             content = content.strip()
             if content.startswith('```json'):
                 content = content[len("```json"):].strip()
@@ -108,21 +155,42 @@ def generate_flashcards_stream(markdown_content):
             if not isinstance(flashcards, list):
                 raise ValueError("Response is not a list")
             
-            # 发送成功结果
+            # 为每个闪卡添加学习状态
+            for card in flashcards:
+                card['learning_state'] = {
+                    'review_count': 0,
+                    'last_review': None,
+                    'next_review': None,
+                    'ease_factor': 2.5,
+                    'interval': 0
+                }
+                # 处理反斜杠，恢复LaTeX公式
+                if '\\\\' in card['question']:
+                    card['question'] = card['question'].replace('\\\\', '\\')
+                if '\\\\' in card['answer']:
+                    card['answer'] = card['answer'].replace('\\\\', '\\')
+                # 处理换行符
+                if '\\n' in card['question']:
+                    card['question'] = card['question'].replace('\\n', '\n')
+                if '\\n' in card['answer']:
+                    card['answer'] = card['answer'].replace('\\n', '\n')
+            
+            saved_filename = save_flashcards(original_filename, flashcards)
+            
             yield json.dumps({
                 'type': 'result',
-                'data': flashcards
+                'data': flashcards,
+                'filename': saved_filename,
+                'message': '成功生成新的闪卡'
             })
 
         except Exception as e:
-            # 发送错误信息
             yield json.dumps({
                 'type': 'error',
                 'data': str(e)
             })
             
     except Exception as e:
-        # 发送错误信息
         yield json.dumps({
             'type': 'error',
             'data': str(e)
@@ -131,6 +199,56 @@ def generate_flashcards_stream(markdown_content):
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/practice/<filename>')
+def practice(filename):
+    try:
+        filepath = os.path.join(FLASHCARDS_FOLDER, filename)
+        if not os.path.exists(filepath):
+            return render_template('error.html', message='找不到闪卡文件')
+        
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read().strip()  # 移除任何多余的空白字符
+            if content.endswith('%'):  # 移除可能的多余字符
+                content = content[:-1]
+            flashcards = json.loads(content)
+        
+        # 处理从文件读取的数据
+        for card in flashcards:
+            # 确保问题和答案是字符串
+            card['question'] = str(card['question']).strip()
+            card['answer'] = str(card['answer']).strip()
+            # 处理LaTeX公式
+            if '\\\\' in card['question']:
+                card['question'] = card['question'].replace('\\\\', '\\')
+            if '\\\\' in card['answer']:
+                card['answer'] = card['answer'].replace('\\\\', '\\')
+        
+        return render_template('practice.html', flashcards=flashcards, filename=filename)
+    except Exception as e:
+        print(f"Error in practice route: {str(e)}")  # 添加服务器端日志
+        return render_template('error.html', message=str(e))
+
+@app.route('/api/update_card_state', methods=['POST'])
+def update_card_state():
+    try:
+        data = request.json
+        filename = data['filename']
+        card_index = data['card_index']
+        new_state = data['new_state']
+        
+        filepath = os.path.join(FLASHCARDS_FOLDER, filename)
+        with open(filepath, 'r', encoding='utf-8') as f:
+            flashcards = json.load(f)
+        
+        flashcards[card_index]['learning_state'] = new_state
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(flashcards, f, ensure_ascii=False, indent=2)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -146,27 +264,15 @@ def upload_file():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
         
-        # Read markdown content
         with open(file_path, 'r', encoding='utf-8') as f:
             markdown_content = f.read()
 
-        # 返回流式响应
         return Response(
-            stream_with_context(generate_flashcards_stream(markdown_content)),
+            stream_with_context(generate_flashcards_stream(markdown_content, filename)),
             mimetype='text/event-stream'
         )
     
     return jsonify({'error': 'File type not allowed'}), 400
-
-@app.route('/flashcards/<filename>')
-def get_flashcards(filename):
-    try:
-        flashcards_path = os.path.join(FLASHCARDS_FOLDER, filename)
-        with open(flashcards_path, 'r', encoding='utf-8') as f:
-            flashcards = json.load(f)
-        return jsonify(flashcards)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 404
 
 if __name__ == '__main__':
     app.run(debug=True) 
