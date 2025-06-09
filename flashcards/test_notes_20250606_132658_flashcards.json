@@ -5,11 +5,11 @@
     "importance": 4,
     "probability": 4,
     "learning_state": {
-      "ease_factor": 2.0500000000000003,
+      "ease_factor": 1.7500000000000004,
       "interval": 3,
-      "last_review": "2025-06-06T05:49:55.074Z",
-      "next_review": "2025-06-09T05:49:55.074Z",
-      "review_count": 4
+      "last_review": "2025-06-09T12:26:43.302Z",
+      "next_review": "2025-06-12T12:26:43.302Z",
+      "review_count": 7
     }
   },
   {
@@ -18,11 +18,11 @@
     "importance": 5,
     "probability": 5,
     "learning_state": {
-      "ease_factor": 1.7500000000000002,
-      "interval": 1,
-      "last_review": "2025-06-06T05:49:56.396Z",
-      "next_review": "2025-06-07T05:49:56.396Z",
-      "review_count": 3
+      "ease_factor": 1.3000000000000003,
+      "interval": 3,
+      "last_review": "2025-06-09T12:26:46.772Z",
+      "next_review": "2025-06-12T12:26:46.772Z",
+      "review_count": 6
     }
   },
   {
@@ -31,11 +31,11 @@
     "importance": 5,
     "probability": 5,
     "learning_state": {
-      "ease_factor": 2.0500000000000003,
+      "ease_factor": 1.7500000000000004,
       "interval": 3,
-      "last_review": "2025-06-06T05:46:13.955Z",
-      "next_review": "2025-06-09T05:46:13.955Z",
-      "review_count": 2
+      "last_review": "2025-06-09T12:26:48.410Z",
+      "next_review": "2025-06-12T12:26:48.410Z",
+      "review_count": 4
     }
   },
   {
@@ -44,11 +44,11 @@
     "importance": 3,
     "probability": 3,
     "learning_state": {
-      "review_count": 1,
-      "last_review": "2025-06-06T05:34:54.709Z",
-      "next_review": "2025-06-07T05:34:54.709Z",
-      "ease_factor": 2.2,
-      "interval": 1
+      "ease_factor": 2.0500000000000003,
+      "interval": 3,
+      "last_review": "2025-06-09T12:26:49.681Z",
+      "next_review": "2025-06-12T12:26:49.681Z",
+      "review_count": 2
     }
   },
   {
@@ -57,11 +57,11 @@
     "importance": 4,
     "probability": 4,
     "learning_state": {
-      "review_count": 1,
-      "last_review": "2025-06-06T05:34:54.923Z",
-      "next_review": "2025-06-09T05:34:54.923Z",
       "ease_factor": 2.35,
-      "interval": 3
+      "interval": 7,
+      "last_review": "2025-06-09T12:26:51.095Z",
+      "next_review": "2025-06-16T12:26:51.095Z",
+      "review_count": 2
     }
   },
   {
@@ -70,11 +70,11 @@
     "importance": 5,
     "probability": 5,
     "learning_state": {
-      "review_count": 1,
-      "last_review": "2025-06-06T05:34:55.198Z",
-      "next_review": "2025-06-09T05:34:55.198Z",
       "ease_factor": 2.35,
-      "interval": 3
+      "interval": 7,
+      "last_review": "2025-06-09T12:26:52.764Z",
+      "next_review": "2025-06-16T12:26:52.764Z",
+      "review_count": 2
     }
   }
 ]

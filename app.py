@@ -58,9 +58,10 @@ def save_flashcards(original_filename, flashcards):
     # 在保存前处理数据
     processed_flashcards = []
     for card in flashcards:
+        # 处理换行符：确保文本中的\n被保留为实际的换行符
         processed_card = {
-            'question': card['question'].strip().replace('\n', ' '),
-            'answer': card['answer'].strip().replace('\n', ' '),
+            'question': card['question'].strip().replace('\\n', '\n'),
+            'answer': card['answer'].strip().replace('\\n', '\n'),
             'importance': card['importance'],
             'probability': card['probability'],
             'learning_state': card['learning_state']
@@ -215,9 +216,9 @@ def practice(filename):
         
         # 处理从文件读取的数据
         for card in flashcards:
-            # 确保问题和答案是字符串
-            card['question'] = str(card['question']).strip()
-            card['answer'] = str(card['answer']).strip()
+            # 确保问题和答案是字符串并处理换行符
+            card['question'] = str(card['question']).strip().replace('\\n', '\n')
+            card['answer'] = str(card['answer']).strip().replace('\\n', '\n')
             # 处理LaTeX公式
             if '\\\\' in card['question']:
                 card['question'] = card['question'].replace('\\\\', '\\')

@@ -4,9 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>闪卡练习</title>
-    <!-- 使用最新版本的marked，并确保它在全局作用域中可用 -->
-    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+    <!-- 使用最新版本的marked -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+    
+    <!-- 先加载MathJax配置 -->
+    <script type="text/x-mathjax-config">
+        MathJax.Hub.Config({
+            tex2jax: {
+                inlineMath: [['$','$'], ['\\(','\\)']],
+                displayMath: [['$$','$$'], ['\\[','\\]']],
+                processEscapes: true,
+                processEnvironments: true
+            },
+            CommonHTML: { linebreaks: { automatic: true } },
+            "HTML-CSS": { linebreaks: { automatic: true } },
+            SVG: { linebreaks: { automatic: true } },
+            showMathMenu: false,
+            showProcessingMessages: false,
+            messageStyle: "none"
+        });
+    </script>
+    <!-- 然后加载MathJax库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    
     <script>
         // 配置marked
         window.onload = function() {
@@ -16,7 +36,7 @@
             }
             // 配置marked选项
             marked.setOptions({
-                breaks: true,
+                breaks: true,  // 启用换行符支持
                 gfm: true,
                 pedantic: false,
                 sanitize: false,
@@ -24,20 +44,8 @@
                 smartypants: false
             });
         };
-
-        // 配置MathJax
-        window.MathJax = {
-            tex2jax: {
-                inlineMath: [['$','$'], ['\\(','\\)']],
-                displayMath: [['$$','$$'], ['\\[','\\]']],
-                processEscapes: true,
-                processEnvironments: true
-            },
-            CommonHTML: { linebreaks: { automatic: true } },
-            "HTML-CSS": { linebreaks: { automatic: true } },
-            SVG: { linebreaks: { automatic: true } }
-        };
     </script>
+    
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -148,13 +156,28 @@
             margin-bottom: 10px;
         }
         /* 添加数学公式样式 */
-        .MathJax {
+        .MathJax_Display {
             overflow-x: auto;
-            max-width: 100%;
+            overflow-y: hidden;
+            margin: 1em 0;
+        }
+        .MathJax {
+            outline: 0;
         }
         .markdown {
             overflow-x: auto;
             max-width: 100%;
+            white-space: pre-wrap;  /* 保留换行符 */
+            word-wrap: break-word;  /* 允许长单词换行 */
+        }
+        
+        /* 确保列表和段落有合适的间距 */
+        .markdown p {
+            margin: 1em 0;
+        }
+        .markdown ul, .markdown ol {
+            margin: 1em 0;
+            padding-left: 2em;
         }
         .error-message {
             color: #dc3545;
@@ -208,7 +231,11 @@
                 return text;
             }
             try {
-                return marked(text);
+                // 确保换行符被正确处理
+                const processedText = text
+                    .replace(/\\n/g, '\n')  // 替换所有的\n为实际换行符
+                    .replace(/\n/g, '  \n'); // 在每个换行符前添加两个空格，确保Markdown换行
+                return marked(processedText);
             } catch (error) {
                 console.error('Error rendering markdown:', error);
                 return text;
@@ -233,7 +260,45 @@
             document.querySelector('.progress').style.width = `${(current / total) * 100}%`;
         }
 
-        function showCard() {
+        // 等待MathJax加载完成
+        function waitForMathJax() {
+            return new Promise((resolve, reject) => {
+                if (window.MathJax && window.MathJax.Hub) {
+                    resolve();
+                } else {
+                    // 检查MathJax是否在10秒内加载
+                    let attempts = 0;
+                    const interval = setInterval(() => {
+                        if (window.MathJax && window.MathJax.Hub) {
+                            clearInterval(interval);
+                            resolve();
+                        } else if (attempts >= 20) { // 20 * 500ms = 10s
+                            clearInterval(interval);
+                            reject(new Error('MathJax failed to load'));
+                        }
+                        attempts++;
+                    }, 500);
+                }
+            });
+        }
+
+        // 渲染数学公式
+        async function renderMathJax(element) {
+            try {
+                await waitForMathJax();
+                return new Promise((resolve) => {
+                    MathJax.Hub.Queue(
+                        ["Typeset", MathJax.Hub, element],
+                        resolve
+                    );
+                });
+            } catch (error) {
+                console.error('Error rendering MathJax:', error);
+                showError('数学公式渲染失败，请刷新页面重试');
+            }
+        }
+
+        async function showCard() {
             if (currentCardIndex >= flashcards.length) {
                 alert('恭喜！你已完成所有闪卡复习。');
                 window.location.href = '/';  // 返回主页
@@ -241,68 +306,55 @@
             }
 
             const card = flashcards[currentCardIndex];
-            console.log('Showing card:', card);  // 调试信息
+            console.log('Showing card:', card);
             
             try {
                 // 确保问题和答案是字符串
                 const question = String(card.question).trim();
                 const answer = String(card.answer).trim();
                 
-                console.log('Processing question:', question);  // 调试信息
-                console.log('Processing answer:', answer);  // 调试信息
+                console.log('Processing question:', question);
+                console.log('Processing answer:', answer);
 
                 // 使用renderMarkdown函数渲染Markdown
                 const questionHtml = renderMarkdown(question);
                 const answerHtml = renderMarkdown(answer);
                 
-                console.log('Rendered question HTML:', questionHtml);  // 调试信息
-                console.log('Rendered answer HTML:', answerHtml);  // 调试信息
-
                 // 更新DOM
-                document.getElementById('question').innerHTML = questionHtml;
-                document.getElementById('answer').innerHTML = answerHtml;
+                const questionElement = document.getElementById('question');
+                const answerElement = document.getElementById('answer');
+                
+                questionElement.innerHTML = questionHtml;
+                answerElement.innerHTML = answerHtml;
                 document.getElementById('importance').textContent = card.importance;
                 document.getElementById('probability').textContent = card.probability;
                 
-                document.getElementById('answer').style.display = 'none';
+                answerElement.style.display = 'none';
                 document.querySelector('.controls').style.display = 'none';
                 document.querySelector('.show-answer').style.display = 'block';
                 showingAnswer = false;
 
                 updateProgress();
                 
-                // 重新渲染数学公式
-                if (window.MathJax) {
-                    console.log('Rendering MathJax...');  // 调试信息
-                    MathJax.Hub.Queue(
-                        ["Typeset", MathJax.Hub, "question"],
-                        function() {
-                            console.log('Question typeset complete');  // 调试信息
-                        },
-                        ["Typeset", MathJax.Hub, "answer"],
-                        function() {
-                            console.log('Answer typeset complete');  // 调试信息
-                        }
-                    );
-                } else {
-                    console.error('MathJax not found!');
-                    showError('数学公式渲染器未加载，可能影响公式显示');
-                }
+                // 渲染数学公式
+                await renderMathJax(questionElement);
+                await renderMathJax(answerElement);
+                
             } catch (error) {
                 console.error('Error in showCard:', error);
                 showError('显示闪卡时出错: ' + error.message);
             }
         }
 
-        function showAnswer() {
-            document.getElementById('answer').style.display = 'block';
+        async function showAnswer() {
+            const answerElement = document.getElementById('answer');
+            answerElement.style.display = 'block';
             document.querySelector('.controls').style.display = 'block';
             document.querySelector('.show-answer').style.display = 'none';
             showingAnswer = true;
+            
             // 重新渲染答案中的数学公式
-            if (window.MathJax) {
-                MathJax.Hub.Queue(["Typeset", MathJax.Hub, "answer"]);
-            }
+            await renderMathJax(answerElement);
         }
 
         async function gradeCard(grade) {
@@ -383,7 +435,7 @@
         }
 
         // 在页面加载时检查数据
-        window.addEventListener('DOMContentLoaded', function() {
+        window.addEventListener('DOMContentLoaded', async function() {
             console.log('Page loaded, checking dependencies...');
             
             // 检查marked
@@ -394,20 +446,24 @@
             }
             
             console.log('Marked library loaded successfully');
-            console.log('Flashcards:', flashcards);
+            
+            // 等待MathJax加载
+            try {
+                await waitForMathJax();
+                console.log('MathJax loaded successfully');
+            } catch (error) {
+                console.error('MathJax failed to load:', error);
+                showError('数学公式渲染器加载失败，请刷新页面重试');
+                return;
+            }
 
+            console.log('Flashcards:', flashcards);
             if (!flashcards || !Array.isArray(flashcards) || flashcards.length === 0) {
                 showError('没有找到闪卡数据或数据格式不正确');
                 return;
             }
             
-            // 检查MathJax
-            if (!window.MathJax) {
-                console.warn('MathJax not loaded on page load');
-                showError('数学公式渲染器未加载，请刷新页面重试');
-            }
-            
-            showCard();
+            await showCard();
         });
     </script>
 </body>
