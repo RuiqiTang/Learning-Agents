@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>闪卡练习</title>
     <!-- 使用最新版本的marked -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
     <!-- 先加载MathJax配置 -->
     <script type="text/x-mathjax-config">
@@ -35,15 +35,32 @@
                 return;
             }
             // 配置marked选项
-            marked.setOptions({
+            marked.use({
                 breaks: true,  // 启用换行符支持
                 gfm: true,
                 pedantic: false,
-                sanitize: false,
-                smartLists: true,
-                smartypants: false
+                mangle: false,
+                headerIds: false
             });
         };
+
+        // 更新renderMarkdown函数
+        function renderMarkdown(text) {
+            if (typeof marked === 'undefined') {
+                console.error('Marked library not loaded!');
+                return text;
+            }
+            try {
+                // 确保换行符被正确处理
+                const processedText = text
+                    .replace(/\\n/g, '\n')  // 替换所有的\n为实际换行符
+                    .replace(/\n/g, '  \n'); // 在每个换行符前添加两个空格，确保Markdown换行
+                return marked.parse(processedText); // 使用 marked.parse 而不是直接调用 marked
+            } catch (error) {
+                console.error('Error rendering markdown:', error);
+                return text;
+            }
+        }
     </script>
     
     <style>
@@ -187,6 +204,57 @@
             border-radius: 4px;
             display: none;
         }
+        
+        .qa-section {
+            margin-top: 20px;
+            padding: 15px;
+            border-top: 1px solid #eee;
+            display: none;
+        }
+        
+        .qa-input {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .qa-answer {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        .qa-actions {
+            display: none;
+            margin-top: 10px;
+            text-align: right;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        .btn-ask {
+            background-color: #17a2b8;
+            color: white;
+        }
+        
+        .btn-append {
+            background-color: #28a745;
+            color: white;
+        }
+        
+        .btn-new {
+            background-color: #007bff;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -209,6 +277,19 @@
                     <div id="question" class="markdown"></div>
                     <div id="answer" class="answer markdown"></div>
                 </div>
+                
+                <!-- 添加提问部分 -->
+                <div class="qa-section">
+                    <textarea class="qa-input" placeholder="输入你的问题..." rows="3"></textarea>
+                    <button class="btn-ask" onclick="askQuestion()">向DeepSeek提问</button>
+                    <div class="qa-answer markdown"></div>
+                    <div class="qa-actions">
+                        <div class="btn-group">
+                            <button class="btn-append" onclick="updateCard('append')">补充到当前卡片</button>
+                            <button class="btn-new" onclick="updateCard('new')">创建新卡片</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="button-group">
@@ -224,25 +305,7 @@
     </div>
 
     <script>
-        // 确保marked可用
-        function renderMarkdown(text) {
-            if (typeof marked === 'undefined') {
-                console.error('Marked library not loaded!');
-                return text;
-            }
-            try {
-                // 确保换行符被正确处理
-                const processedText = text
-                    .replace(/\\n/g, '\n')  // 替换所有的\n为实际换行符
-                    .replace(/\n/g, '  \n'); // 在每个换行符前添加两个空格，确保Markdown换行
-                return marked(processedText);
-            } catch (error) {
-                console.error('Error rendering markdown:', error);
-                return text;
-            }
-        }
-
-        const flashcards = {{ flashcards|tojson|safe }};
+        let flashcards = {{ flashcards|tojson|safe }};
         const filename = "{{ filename }}";
         let currentCardIndex = 0;
         let showingAnswer = false;
@@ -329,15 +392,19 @@
                 document.getElementById('importance').textContent = card.importance;
                 document.getElementById('probability').textContent = card.probability;
                 
+                // 重置显示状态
                 answerElement.style.display = 'none';
                 document.querySelector('.controls').style.display = 'none';
                 document.querySelector('.show-answer').style.display = 'block';
+                document.querySelector('.qa-section').style.display = 'none';
                 showingAnswer = false;
 
                 updateProgress();
                 
                 // 渲染数学公式
+                console.log('Rendering MathJax for question');
                 await renderMathJax(questionElement);
+                console.log('Rendering MathJax for answer');
                 await renderMathJax(answerElement);
                 
             } catch (error) {
@@ -351,6 +418,7 @@
             answerElement.style.display = 'block';
             document.querySelector('.controls').style.display = 'block';
             document.querySelector('.show-answer').style.display = 'none';
+            document.querySelector('.qa-section').style.display = 'block';  // 显示提问部分
             showingAnswer = true;
             
             // 重新渲染答案中的数学公式
@@ -427,11 +495,139 @@
             showCard();
         }
 
+        async function askQuestion() {
+            console.log('askQuestion function called');
+            const question = document.querySelector('.qa-input').value.trim();
+            if (!question) {
+                showError('请输入问题');
+                return;
+            }
+
+            console.log('Question:', question);
+            const card = flashcards[currentCardIndex];
+            const context = `问题：${card.question}\n\n答案：${card.answer}`;
+            console.log('Context:', context);
+
+            try {
+                console.log('Sending request to /api/ask_deepseek');
+                const response = await fetch('/api/ask_deepseek', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question: question,
+                        context: context
+                    })
+                });
+                console.log('Response received:', response);
+
+                const data = await response.json();
+                console.log('Response data:', data);
+                
+                if (!data.success) {
+                    throw new Error(data.error);
+                }
+
+                const answerElement = document.querySelector('.qa-answer');
+                answerElement.innerHTML = renderMarkdown(data.answer);
+                answerElement.style.display = 'block';
+                document.querySelector('.qa-actions').style.display = 'block';
+
+                // 渲染数学公式
+                console.log('Rendering MathJax for DeepSeek answer');
+                await renderMathJax(answerElement);
+            } catch (error) {
+                console.error('Error in askQuestion:', error);
+                showError('提问失败: ' + error.message);
+            }
+        }
+
+        async function updateCard(type) {
+            const answer = document.querySelector('.qa-answer').textContent;
+            const question = document.querySelector('.qa-input').value.trim();
+
+            try {
+                const response = await fetch('/api/update_card', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        filename: filename,
+                        card_index: currentCardIndex,
+                        update_type: type,
+                        content: answer,
+                        question: question
+                    })
+                });
+
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.error);
+                }
+
+                // 更新闪卡数据
+                flashcards = data.flashcards;
+                
+                // 清理提问界面
+                document.querySelector('.qa-input').value = '';
+                document.querySelector('.qa-answer').innerHTML = '';
+                document.querySelector('.qa-answer').style.display = 'none';
+                document.querySelector('.qa-actions').style.display = 'none';
+
+                // 如果是追加到当前卡片，重新渲染当前卡片
+                if (type === 'append') {
+                    const card = flashcards[currentCardIndex];
+                    const answerElement = document.getElementById('answer');
+                    answerElement.innerHTML = renderMarkdown(card.answer);
+                    await renderMathJax(answerElement);
+                }
+                
+                // 显示成功消息
+                showSuccess(type === 'append' ? '已补充到当前卡片' : '已创建新卡片');
+            } catch (error) {
+                console.error('Error in updateCard:', error);
+                showError('更新失败: ' + error.message);
+            }
+        }
+
         function showError(message) {
             const errorElement = document.querySelector('.error-message');
             errorElement.textContent = message;
             errorElement.style.display = 'block';
             console.error('Error:', message);
+        }
+
+        function showSuccess(message) {
+            const successElement = document.createElement('div');
+            successElement.className = 'success-message';
+            successElement.style.cssText = `
+                color: #28a745;
+                padding: 10px;
+                margin: 10px 0;
+                border: 1px solid #28a745;
+                border-radius: 4px;
+                display: block;
+            `;
+            successElement.textContent = message;
+            
+            // 移除旧的成功消息
+            const oldSuccess = document.querySelector('.success-message');
+            if (oldSuccess) {
+                oldSuccess.remove();
+            }
+            
+            // 添加新的成功消息
+            document.querySelector('.container').insertBefore(
+                successElement,
+                document.querySelector('.stats')
+            );
+            
+            // 3秒后自动消失
+            setTimeout(() => {
+                successElement.remove();
+            }, 3000);
         }
 
         // 在页面加载时检查数据
