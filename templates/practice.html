@@ -14,11 +14,24 @@
                 inlineMath: [['$','$'], ['\\(','\\)']],
                 displayMath: [['$$','$$'], ['\\[','\\]']],
                 processEscapes: true,
-                processEnvironments: true
+                processEnvironments: true,
+                skipTags: ['script', 'noscript', 'style', 'textarea', 'pre']
             },
-            CommonHTML: { linebreaks: { automatic: true } },
-            "HTML-CSS": { linebreaks: { automatic: true } },
-            SVG: { linebreaks: { automatic: true } },
+            CommonHTML: { 
+                linebreaks: { automatic: true },
+                scale: 100,
+                minScaleAdjust: 100
+            },
+            "HTML-CSS": { 
+                linebreaks: { automatic: true },
+                scale: 100,
+                minScaleAdjust: 100
+            },
+            SVG: { 
+                linebreaks: { automatic: true },
+                scale: 100,
+                minScaleAdjust: 100
+            },
             showMathMenu: false,
             showProcessingMessages: false,
             messageStyle: "none"
@@ -37,10 +50,24 @@
             // 配置marked选项
             marked.use({
                 breaks: true,  // 启用换行符支持
-                gfm: true,
+                gfm: true,     // 启用GitHub风格的Markdown
                 pedantic: false,
                 mangle: false,
-                headerIds: false
+                headerIds: false,
+                // 自定义渲染器
+                renderer: {
+                    paragraph(text) {
+                        // 如果段落只包含数学公式，不添加额外的p标签
+                        if (text.trim().startsWith('$') && text.trim().endsWith('$')) {
+                            return text + '\n';
+                        }
+                        return '<p>' + text + '</p>\n';
+                    },
+                    text(text) {
+                        // 处理数学公式周围的空格
+                        return text.replace(/\s*\$\s*/g, '$');
+                    }
+                }
             });
         };
 
@@ -51,11 +78,17 @@
                 return text;
             }
             try {
-                // 确保换行符被正确处理
+                // 预处理文本
                 const processedText = text
                     .replace(/\\n/g, '\n')  // 替换所有的\n为实际换行符
-                    .replace(/\n/g, '  \n'); // 在每个换行符前添加两个空格，确保Markdown换行
-                return marked.parse(processedText); // 使用 marked.parse 而不是直接调用 marked
+                    .replace(/\n\n+/g, '\n\n')  // 将多个连续换行符替换为两个
+                    .replace(/\n/g, '  \n')  // 在每个换行符前添加两个空格，确保Markdown换行
+                    .trim();  // 移除首尾空白
+                
+                // 渲染Markdown
+                const renderedHtml = marked.parse(processedText);
+                
+                return renderedHtml;
             } catch (error) {
                 console.error('Error rendering markdown:', error);
                 return text;
@@ -176,7 +209,10 @@
         .MathJax_Display {
             overflow-x: auto;
             overflow-y: hidden;
-            margin: 1em 0;
+            margin: 1em 0 !important;
+            padding: 0.5em 0;
+            background-color: #f8f9fa;
+            border-radius: 4px;
         }
         .MathJax {
             outline: 0;
@@ -186,6 +222,7 @@
             max-width: 100%;
             white-space: pre-wrap;  /* 保留换行符 */
             word-wrap: break-word;  /* 允许长单词换行 */
+            line-height: 1.6;       /* 增加行高 */
         }
         
         /* 确保列表和段落有合适的间距 */
@@ -254,6 +291,15 @@
         .btn-new {
             background-color: #007bff;
             color: white;
+        }
+        /* 强调样式 */
+        .markdown strong {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+        /* 段落间距 */
+        .markdown > *:not(:last-child) {
+            margin-bottom: 1em;
         }
     </style>
 </head>
@@ -544,7 +590,8 @@
         }
 
         async function updateCard(type) {
-            const answer = document.querySelector('.qa-answer').textContent;
+            const answerElement = document.querySelector('.qa-answer');
+            const answer = answerElement.innerHTML;  // Get the HTML content with LaTeX formulas
             const question = document.querySelector('.qa-input').value.trim();
 
             try {
@@ -572,8 +619,8 @@
                 
                 // 清理提问界面
                 document.querySelector('.qa-input').value = '';
-                document.querySelector('.qa-answer').innerHTML = '';
-                document.querySelector('.qa-answer').style.display = 'none';
+                answerElement.innerHTML = '';
+                answerElement.style.display = 'none';
                 document.querySelector('.qa-actions').style.display = 'none';
 
                 // 如果是追加到当前卡片，重新渲染当前卡片
@@ -582,6 +629,9 @@
                     const answerElement = document.getElementById('answer');
                     answerElement.innerHTML = renderMarkdown(card.answer);
                     await renderMathJax(answerElement);
+                } else {
+                    // 如果是新卡片，显示成功消息后重新渲染当前卡片
+                    await showCard();
                 }
                 
                 // 显示成功消息

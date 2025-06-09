@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 import glob
 import logging
+import re
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
@@ -99,6 +100,11 @@ def generate_flashcards_stream(markdown_content, original_filename):
         # 首先检查是否存在现有的闪卡文件
         existing_flashcards, existing_filename = find_existing_flashcards(original_filename)
         if existing_flashcards:
+            # 处理现有闪卡的内容
+            for card in existing_flashcards:
+                card['question'] = format_answer(card['question'])
+                card['answer'] = format_answer(card['answer'])
+            
             yield json.dumps({
                 'type': 'result',
                 'data': existing_flashcards,
@@ -236,13 +242,9 @@ def practice(filename):
         
         # 处理从文件读取的数据
         for card in flashcards:
-            # 确保问题和答案是字符串并处理换行符
-            card['question'] = str(card['question']).strip().replace('\\n', '\n')
-            card['answer'] = str(card['answer']).strip().replace('\\n', '\n')
-            
-            # 清理和标准化公式
-            card['question'] = normalize_latex_formula(card['question'])
-            card['answer'] = normalize_latex_formula(card['answer'])
+            # 确保问题和答案是字符串并处理格式
+            card['question'] = format_answer(str(card['question']).strip())
+            card['answer'] = format_answer(str(card['answer']).strip())
         
         return render_template('practice.html', flashcards=flashcards, filename=filename)
     except Exception as e:
@@ -310,10 +312,13 @@ def normalize_latex_formula(text):
             'π': '\\pi', 'ρ': '\\rho', 'σ': '\\sigma', 'τ': '\\tau',
             'φ': '\\phi', 'ω': '\\omega', 'Γ': '\\Gamma', 'Δ': '\\Delta',
             'Θ': '\\Theta', 'Λ': '\\Lambda', 'Ξ': '\\Xi', 'Π': '\\Pi',
-            'Σ': '\\Sigma', 'Φ': '\\Phi', 'Ψ': '\\Psi', 'Ω': '\\Omega'
+            'Σ': '\\Sigma', 'Φ': '\\Phi', 'Ψ': '\\Psi', 'Ω': '\\Omega',
+            # Unicode数学符号映射
+            '𝜋': '\\pi', '𝑥': 'x', '𝑟': 'r', '𝑞': 'q', '𝑝': 'p',
+            '′': "'", '⋅': '\\cdot', '∼': '\\sim'
         }
         
-        # 替换Unicode希腊字母为LaTeX命令
+        # 替换Unicode希腊字母和数学符号为LaTeX命令
         for greek, latex in greek_letters.items():
             formula = formula.replace(greek, latex)
         
@@ -333,8 +338,8 @@ def normalize_latex_formula(text):
             formula = re.sub(r'\b' + re.escape(op) + r'\b', latex, formula)
         
         # 处理上下标
-        formula = re.sub(r'([a-zA-Z0-9])_([a-zA-Z0-9]+)', r'\1_{\\text{\2}}', formula)
-        formula = re.sub(r'([a-zA-Z0-9])\^([a-zA-Z0-9]+)', r'\1^{\\text{\2}}', formula)
+        formula = re.sub(r'([a-zA-Z0-9])\s*_\s*([a-zA-Z0-9\']+)', r'\1_{\2}', formula)
+        formula = re.sub(r'([a-zA-Z0-9])\s*\^\s*([a-zA-Z0-9\']+)', r'\1^{\2}', formula)
         
         # 确保分数格式正确
         formula = re.sub(r'\\frac\s*{([^}]+)}\s*{([^}]+)}', r'\\frac{\1}{\2}', formula)
@@ -342,24 +347,29 @@ def normalize_latex_formula(text):
         # 处理多重反斜杠
         formula = formula.replace('\\\\', '\\')
         
+        # 移除公式内多余的空格
+        formula = re.sub(r'\s+', ' ', formula)
+        formula = re.sub(r'(?<=\W)\s+|\s+(?=\W)', '', formula)
+        
         return formula
 
-    def process_text_segment(text):
-        """处理文本段落，识别并转换数学表达式"""
-        # 识别单个字母变量并转换为数学模式
-        text = re.sub(r'(?<![\\$a-zA-Z])([x-zX-Z])(?![\\$a-zA-Z0-9])', r'$\1$', text)
-        
-        # 处理简单的上下标表达式
-        text = re.sub(r'([a-zA-Z])_([a-zA-Z0-9])', r'$\1_{\2}$', text)
-        text = re.sub(r'([a-zA-Z])\^([a-zA-Z0-9])', r'$\1^{\2}$', text)
-        
+    def merge_adjacent_formulas(text):
+        """合并相邻的数学公式"""
+        # 合并相邻的行内公式
+        text = re.sub(r'\$\s*\$', '', text)  # 移除空的数学模式
+        text = re.sub(r'\$\s*,\s*\$', ',', text)  # 合并被逗号分隔的公式
+        text = re.sub(r'\$\s*([|,])\s*\$', r'\1', text)  # 合并被特殊字符分隔的公式
+        text = re.sub(r'\$([^$]+?)\$\s*\$([^$]+?)\$', r'$\1\2$', text)  # 合并相邻的数学模式
         return text
 
     try:
         if not isinstance(text, str):
             return text
 
-        # 1. 首先处理已有的数学公式
+        # 预处理：移除多余的LaTeX命令
+        text = re.sub(r'\\\\', r'\\', text)
+        
+        # 处理行内公式
         def replace_math_formula(match):
             formula = match.group(1)
             return f"${clean_formula(formula)}$"
@@ -369,29 +379,96 @@ def normalize_latex_formula(text):
             return f"$${clean_formula(formula)}$$"
 
         # 处理行内公式
-        text = re.sub(r'\$([^\$]+)\$', replace_math_formula, text)
+        text = re.sub(r'\$([^\$]+?)\$', replace_math_formula, text)
         # 处理行间公式
-        text = re.sub(r'\$\$([^\$]+)\$\$', replace_display_formula, text)
+        text = re.sub(r'\$\$([^\$]+?)\$\$', replace_display_formula, text)
         
-        # 2. 处理普通文本中的数学表达式
-        segments = text.split('$')
-        for i in range(0, len(segments), 2):
-            segments[i] = process_text_segment(segments[i])
-        text = '$'.join(segments)
-        
-        # 3. 清理和最终格式化
-        # 移除重复的数学模式标记
-        text = re.sub(r'\$\s*\$', '', text)
-        text = re.sub(r'\$(\s*\$\s*\$\s*)\$', r'$$\1$$', text)
+        # 合并相邻的数学公式
+        text = merge_adjacent_formulas(text)
         
         # 确保公式周围有适当的空格
         text = re.sub(r'([^\s])\$', r'\1 $', text)
         text = re.sub(r'\$([^\s])', r'$ \1', text)
         
+        # 最终清理
+        text = re.sub(r'\s+', ' ', text)  # 规范化空格
+        text = text.replace(' ,', ',').replace(' .', '.')  # 修正标点符号
+        
         return text
     except Exception as e:
         logger.error(f"Error in normalize_latex_formula: {str(e)}")
         return text  # 如果处理失败，返回原始文本
+
+def format_answer(answer):
+    """格式化答案文本，处理数学公式和格式化"""
+    try:
+        # 预处理文本
+        text = answer.strip()
+        if text.startswith('```') and text.endswith('```'):
+            text = text[3:-3].strip()
+        text = text.lstrip('\ufeff')
+        
+        # 处理数学公式和格式化
+        def clean_math_text(text):
+            # 统一处理Unicode数学符号
+            unicode_math = {
+                '𝑥': 'x', '𝑟': 'r', '𝑞': 'q', '𝑝': 'p',
+                '𝜋': '\\pi', '𝜃': '\\theta', '𝜇': '\\mu',
+                '′': "'", '⋅': '\\cdot', '∼': '\\sim',
+                '∆': '\\Delta', 'α': '\\alpha', 'β': '\\beta',
+                'γ': '\\gamma', 'δ': '\\delta', 'ε': '\\epsilon',
+                'ζ': '\\zeta', 'η': '\\eta', 'λ': '\\lambda',
+                'σ': '\\sigma', 'τ': '\\tau', 'φ': '\\phi',
+                'ω': '\\omega', 'Γ': '\\Gamma', 'Δ': '\\Delta',
+                'Θ': '\\Theta', 'Λ': '\\Lambda', 'Ξ': '\\Xi',
+                'Π': '\\Pi', 'Σ': '\\Sigma', 'Φ': '\\Phi',
+                'Ψ': '\\Psi', 'Ω': '\\Omega'
+            }
+            for unicode_char, latex_char in unicode_math.items():
+                text = text.replace(unicode_char, latex_char)
+            
+            # 处理数学公式
+            text = re.sub(r'\\Delta\s+H', '\\Delta H', text)  # 修复Delta H的间距
+            text = re.sub(r'\$\((.*?)\)\$', r'$\1$', text)  # 移除公式中多余的括号
+            text = re.sub(r'\(\s*x\s*,\s*r\s*\)', '(x,r)', text)  # 标准化坐标对
+            text = re.sub(r'\$\s*,\s*\$', ', ', text)  # 修复被错误分割的公式
+            
+            # 处理绝对值符号
+            text = text.replace('|', '\\|')  # 将普通竖线替换为LaTeX绝对值符号
+            
+            # 确保公式中的空格正确
+            text = re.sub(r'(?<=\w)(?=[\\$])', ' ', text)  # 在公式前添加空格
+            text = re.sub(r'(?<=[\\$])(?=\w)', ' ', text)  # 在公式后添加空格
+            
+            # 处理多行公式
+            text = re.sub(r'\n\s*(?=[\\$])', ' ', text)  # 合并跨行的公式
+            text = re.sub(r'(?<=[\\$])\s*\n', ' ', text)  # 合并跨行的公式
+            
+            # 处理段落格式
+            text = re.sub(r'\n{3,}', '\n\n', text)  # 减少多余的空行
+            text = re.sub(r'(?<=。)\s*\n\s*(?=\S)', '\n\n', text)  # 在句子之间添加适当的空行
+            
+            # 处理特殊的LaTeX命令
+            text = re.sub(r'\\begin{equation}', '$$', text)
+            text = re.sub(r'\\end{equation}', '$$', text)
+            text = re.sub(r'\\begin{align}', '$$', text)
+            text = re.sub(r'\\end{align}', '$$', text)
+            
+            # 处理常见的数学符号
+            text = re.sub(r'\\left\|', '\\|', text)
+            text = re.sub(r'\\right\|', '\\|', text)
+            text = re.sub(r'\\mathbb{R}', '\\mathbb{R}', text)
+            text = re.sub(r'\\mathcal{N}', '\\mathcal{N}', text)
+            
+            return text.strip()
+        
+        # 应用清理和格式化
+        formatted_text = clean_math_text(text)
+        return formatted_text
+        
+    except Exception as e:
+        logger.error(f"Error in format_answer: {str(e)}")
+        return answer.strip()  # 如果处理失败，返回原始文本
 
 def format_deepseek_prompt():
     """生成用于DeepSeek的数学公式格式化提示"""
@@ -439,17 +516,18 @@ def ask_deepseek():
         
         # 构建提示词
         prompt = f"""
-        作为一个专业的数学和机器学习教育专家，请基于以下内容回答问题。
-        请确保回答准确、清晰，并保持与原文一致的专业水平。
-        
-        {format_deepseek_prompt()}
+                作为一个专业的数学和机器学习教育专家，请基于以下内容回答问题。
+                请确保回答准确、清晰，并保持与原文一致的专业水平，不要求生成json等格式化数据，而是自然语言。
+                
+                根据数学格式化规则：
+                {format_deepseek_prompt()}
+                
+                上下文内容：
+                {context}
 
-        上下文内容：
-        {context}
-
-        问题：
-        {question}
-        """
+                问题：
+                {question}
+                """
         
         logger.debug("Calling DeepSeek API")
         try:
@@ -458,23 +536,23 @@ def ask_deepseek():
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一个专业的数学和机器学习教育专家，精通解释复杂的数学概念。" + format_deepseek_prompt()
+                        "content": "你是一个专业的数学和机器学习教育专家，精通将复杂的数学概念转换为清晰的FlashCards。请确保保留所有LaTeX公式。"
                     },
                     {
                         "role": "user",
                         "content": prompt
                     }
                 ],
-                temperature=0.3,
-                max_tokens=2000,
+                temperature=0.3,  # 降低温度以获得更确定性的输出
+                max_tokens=4000,  # 增加最大token以处理长文本
                 stream=False
             )
             
             logger.debug("Received response from DeepSeek API")
             answer = response.choices[0].message.content.strip()
             
-            # 清理和标准化公式
-            processed_answer = normalize_latex_formula(answer)
+            # 格式化答案
+            processed_answer = answer
             logger.debug(f"Processed answer: {processed_answer}")
             
             return jsonify({
@@ -504,9 +582,6 @@ def update_card():
         update_type = data['update_type']  # 'append' 或 'new'
         new_content = data['content']
         
-        # 清理和标准化公式
-        new_content = normalize_latex_formula(new_content)
-        
         filepath = os.path.join(FLASHCARDS_FOLDER, filename)
         with open(filepath, 'r', encoding='utf-8') as f:
             flashcards = json.load(f)
@@ -514,12 +589,12 @@ def update_card():
         if update_type == 'append':
             # 在现有卡片中添加新内容
             card = flashcards[card_index]
-            card['answer'] = card['answer'].strip() + '\n\n补充内容：\n' + new_content.strip()
+            card['answer'] = format_answer(card['answer'].strip() + '\n\n补充内容：\n' + new_content.strip())
         else:  # 'new'
             # 创建新卡片
             new_card = {
-                'question': f"补充问题：{data['question']}",
-                'answer': new_content.strip(),
+                'question': format_answer(f"补充问题：{data['question']}"),
+                'answer': format_answer(new_content.strip()),
                 'importance': flashcards[card_index]['importance'],
                 'probability': flashcards[card_index]['probability'],
                 'learning_state': {
