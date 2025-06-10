@@ -44,14 +44,21 @@ class Database:
                     CREATE TABLE IF NOT EXISTS flashcards (
                         id INT AUTO_INCREMENT PRIMARY KEY,
                         source_file VARCHAR(255) NOT NULL,
-                        question TEXT NOT NULL,
-                        answer TEXT NOT NULL,
+                        question LONGTEXT NOT NULL,
+                        answer LONGTEXT NOT NULL,
                         importance INT NOT NULL DEFAULT 3,
                         probability INT NOT NULL DEFAULT 3,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                         INDEX idx_source_file (source_file)
                     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+                """)
+                
+                # 修改现有表的字段类型
+                cursor.execute("""
+                    ALTER TABLE flashcards 
+                    MODIFY question LONGTEXT NOT NULL,
+                    MODIFY answer LONGTEXT NOT NULL
                 """)
                 
                 # Create review_records table

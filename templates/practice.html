@@ -310,6 +310,23 @@
             margin: 20px;
             text-align: center;
         }
+        .loading-spinner {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .spinner {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -344,6 +361,10 @@
                 <div class="qa-section" style="display: none;">
                     <textarea class="qa-input" placeholder="输入你的问题..." rows="3"></textarea>
                     <button class="button btn-ask" onclick="askDeepSeek(this)">向DeepSeek提问</button>
+                    <div class="loading-spinner" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>正在思考中...</span>
+                    </div>
                     <div class="qa-answer"></div>
                     <div class="qa-actions" style="display: none;">
                         <button class="button btn-append" onclick="updateCard('append', this)">补充到当前卡片</button>
@@ -370,15 +391,17 @@
         function updateProgress() {
             const cards = document.querySelectorAll('.card');
             const total = cards.length;
-            const current = parseInt(document.getElementById('currentCard').textContent);
+            const current = currentCardIndex + 1;
             
             // 更新进度文本
+            document.getElementById('currentCard').textContent = Math.min(current, total);
             document.getElementById('totalCards').textContent = total;
             
-            // 更新进度条（如果存在）
+            // 更新进度条
             const progressBar = document.querySelector('.progress-bar .progress');
             if (progressBar) {
-                progressBar.style.width = `${(current / total) * 100}%`;
+                const percentage = Math.min((current / total) * 100, 100);
+                progressBar.style.width = `${percentage}%`;
             }
         }
 
@@ -592,6 +615,15 @@
                 answer: card.querySelector('.answer').innerHTML
             };
 
+            // 显示加载动画
+            const loadingSpinner = card.querySelector('.loading-spinner');
+            const qaAnswer = card.querySelector('.qa-answer');
+            const qaActions = card.querySelector('.qa-actions');
+            
+            loadingSpinner.style.display = 'block';
+            qaAnswer.style.display = 'none';
+            qaActions.style.display = 'none';
+
             try {
                 const response = await fetch('/api/ask_deepseek', {
                     method: 'POST',
@@ -609,9 +641,8 @@
                     throw new Error(data.error);
                 }
 
-                const qaAnswer = card.querySelector('.qa-answer');
-                const qaActions = card.querySelector('.qa-actions');
-                
+                // 隐藏加载动画，显示答案
+                loadingSpinner.style.display = 'none';
                 qaAnswer.innerHTML = renderMarkdown(data.answer);
                 await renderMathJax(qaAnswer);
                 
@@ -620,6 +651,7 @@
             } catch (error) {
                 console.error('Error in askDeepSeek:', error);
                 showError('提问失败: ' + error.message);
+                loadingSpinner.style.display = 'none';
             }
         }
 
@@ -694,6 +726,10 @@
                 <div class="qa-section" style="display: none;">
                     <textarea class="qa-input" placeholder="输入你的问题..." rows="3"></textarea>
                     <button class="button btn-ask" onclick="askDeepSeek(this)">向DeepSeek提问</button>
+                    <div class="loading-spinner" style="display: none;">
+                        <div class="spinner"></div>
+                        <span>正在思考中...</span>
+                    </div>
                     <div class="qa-answer"></div>
                     <div class="qa-actions" style="display: none;">
                         <button class="button btn-append" onclick="updateCard('append', this)">补充到当前卡片</button>
@@ -795,8 +831,7 @@
             const cardId = card.dataset.id;
             const cardIndex = parseInt(card.dataset.index);
             
-            // 计算下次复习时间和间隔
-            const now = new Date();
+            // 计算新的间隔和难度系数
             let interval = 0;
             let easeFactor = parseFloat(card.dataset.easeFactor || 2.5);
             
@@ -814,6 +849,7 @@
                     break;
             }
 
+            const now = new Date();
             const nextReview = new Date(now);
             nextReview.setDate(nextReview.getDate() + interval);
 
@@ -822,55 +858,52 @@
                 return date.toISOString().slice(0, 19).replace('T', ' ');
             };
 
-            // 发送复习记录到服务器
-            fetch('/api/update_card_state', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    card_id: cardId,
-                    review_data: {
-                        review_date: formatDate(now),
-                        next_review: formatDate(nextReview),
-                        difficulty: difficulty,
-                        ease_factor: easeFactor,
-                        interval: interval
-                    }
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    // 显示下一张卡片
-                    showNextCard(cardIndex);
-                } else {
-                    alert('保存复习记录失败：' + data.error);
+            try {
+                const response = await fetch('/api/update_card_state', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        card_id: cardId,
+                        review_data: {
+                            review_date: formatDate(now),
+                            next_review: formatDate(nextReview),
+                            difficulty: difficulty,
+                            ease_factor: easeFactor,
+                            interval: interval
+                        }
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update card state');
                 }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                alert('保存复习记录失败');
-            });
-        }
 
-        function showNextCard(currentIndex) {
-            const cards = document.querySelectorAll('.card');
-            const totalCards = cards.length;
-            const nextIndex = currentIndex + 1;
+                // 更新进度
+                currentCardIndex++;
+                updateProgress();
 
-            // 更新进度
-            document.getElementById('currentCard').textContent = nextIndex + 1;
-
-            if (nextIndex < totalCards) {
-                // 隐藏当前卡片
-                cards[currentIndex].style.display = 'none';
-                // 显示下一张卡片
-                cards[nextIndex].style.display = 'block';
-            } else {
-                // 所有卡片都复习完了
-                alert('恭喜！所有卡片都已复习完成。');
-                window.location.href = '/';  // 返回首页
+                // 隐藏当前卡片，显示下一张
+                const currentCard = document.querySelector(`.card[data-index="${cardIndex}"]`);
+                const nextCard = document.querySelector(`.card[data-index="${cardIndex + 1}"]`);
+                
+                if (currentCard) {
+                    currentCard.style.display = 'none';
+                }
+                
+                if (nextCard) {
+                    nextCard.style.display = 'block';
+                    // 重新渲染下一张卡片的数学公式
+                    await renderMathJax(nextCard);
+                } else {
+                    // 所有卡片都已复习完
+                    alert('恭喜！你已完成所有闪卡复习。');
+                    window.location.href = '/';
+                }
+            } catch (error) {
+                console.error('Error updating card state:', error);
+                showError('更新卡片状态失败: ' + error.message);
             }
         }
     </script>
