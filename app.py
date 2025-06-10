@@ -80,20 +80,24 @@ def save_flashcards(original_filename, flashcards):
     try:
         # 保存到数据库
         for card in flashcards:
-            # 检查卡片是否已存在
-            if not db.flashcard_exists(original_filename, card['question']):
-                flashcard_data = {
-                    'source_file': original_filename,
-                    'question': card['question'],
-                    'answer': card['answer'],
-                    'importance': card['importance'],
-                    'probability': card['probability'],
-                    'review_count': card.get('learning_state', {}).get('review_count', 0),
-                    'last_review': card.get('learning_state', {}).get('last_review'),
-                    'next_review': card.get('learning_state', {}).get('next_review'),
-                    'ease_factor': card.get('learning_state', {}).get('ease_factor', 2.5)
-                }
-                db.save_flashcard(flashcard_data)
+            flashcard_data = {
+                'source_file': original_filename,
+                'question': card['question'],
+                'answer': card['answer'],
+                'importance': card.get('importance', 3),
+                'probability': card.get('probability', 3)
+            }
+            
+            # 如果有学习状态，添加相关字段
+            if 'learning_state' in card and card['learning_state']:
+                flashcard_data.update({
+                    'last_review': card['learning_state'].get('last_review'),
+                    'next_review': card['learning_state'].get('next_review'),
+                    'ease_factor': card['learning_state'].get('ease_factor', 2.5)
+                })
+            
+            # 保存到数据库
+            db.save_flashcard(flashcard_data)
         
         # 同时保存到JSON文件（保持向后兼容）
         base_name = os.path.splitext(original_filename)[0]

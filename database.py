@@ -81,33 +81,73 @@ class Database:
                 connection.close()
 
     def save_flashcard(self, flashcard_data):
-        """Save a flashcard to database"""
+        """保存闪卡到数据库"""
         connection = None
         try:
             connection = self.connect()
             with connection.cursor() as cursor:
-                sql = """
-                    INSERT INTO flashcards 
-                    (source_file, question, answer, importance, probability, 
-                     review_count, last_review, next_review, last_difficulty, ease_factor)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-                cursor.execute(sql, (
-                    flashcard_data['source_file'],
-                    flashcard_data['question'],
-                    flashcard_data['answer'],
-                    flashcard_data['importance'],
-                    flashcard_data['probability'],
-                    flashcard_data.get('review_count', 0),
-                    flashcard_data.get('last_review'),
-                    flashcard_data.get('next_review'),
-                    flashcard_data.get('last_difficulty'),
-                    flashcard_data.get('ease_factor', 2.5)
-                ))
+                # 检查卡片是否存在
+                exists, existing_card = self.flashcard_exists(
+                    flashcard_data['source_file'], 
+                    flashcard_data['question']
+                )
+                
+                if not exists:
+                    # 插入新卡片
+                    sql = """
+                        INSERT INTO flashcards 
+                        (source_file, question, answer, importance, probability)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """
+                    cursor.execute(sql, (
+                        flashcard_data['source_file'],
+                        flashcard_data['question'],
+                        flashcard_data['answer'],
+                        flashcard_data.get('importance', 3),
+                        flashcard_data.get('probability', 3)
+                    ))
+                    flashcard_id = cursor.lastrowid
+                else:
+                    # 更新现有卡片
+                    sql = """
+                        UPDATE flashcards 
+                        SET answer = %s,
+                            importance = %s,
+                            probability = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    """
+                    cursor.execute(sql, (
+                        flashcard_data['answer'],
+                        flashcard_data.get('importance', 3),
+                        flashcard_data.get('probability', 3),
+                        existing_card['id']
+                    ))
+                    flashcard_id = existing_card['id']
+                
+                # 如果有学习状态，创建复习记录
+                if 'last_review' in flashcard_data and flashcard_data['last_review']:
+                    sql = """
+                        INSERT INTO review_records 
+                        (flashcard_id, review_date, next_review, difficulty, ease_factor, review_interval)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """
+                    cursor.execute(sql, (
+                        flashcard_id,
+                        flashcard_data['last_review'],
+                        flashcard_data.get('next_review'),
+                        'normal',  # 默认难度
+                        flashcard_data.get('ease_factor', 2.5),
+                        0  # 初始间隔
+                    ))
+                
                 connection.commit()
-                return cursor.lastrowid
+                return flashcard_id
+                
         except Exception as e:
             logger.error(f"Error saving flashcard: {str(e)}")
+            if connection:
+                connection.rollback()
             raise
         finally:
             if connection:
@@ -342,9 +382,19 @@ class Database:
         try:
             connection = self.connect()
             with connection.cursor() as cursor:
-                sql = "SELECT id FROM flashcards WHERE source_file=%s AND question=%s"
+                # 首先检查是否存在完全相同的卡片
+                sql = """
+                    SELECT id, answer, importance, probability 
+                    FROM flashcards 
+                    WHERE source_file=%s AND question=%s
+                """
                 cursor.execute(sql, (source_file, question))
-                return cursor.fetchone() is not None
+                result = cursor.fetchone()
+                
+                if result is None:
+                    return False, None
+                
+                return True, result
         except Exception as e:
             logger.error(f"Error checking flashcard existence: {str(e)}")
             raise
