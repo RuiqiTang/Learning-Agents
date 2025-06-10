@@ -6,6 +6,10 @@
     <title>Markdown to Flashcards</title>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-MML-AM_CHTML"></script>
+    <!-- 添加Cal-Heatmap所需的库 -->
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.17/d3.min.js"></script>
+    <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/cal-heatmap/3.6.2/cal-heatmap.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cal-heatmap/3.6.2/cal-heatmap.css" />
     <script>
         // 配置MathJax
         window.MathJax = {
@@ -205,11 +209,100 @@
             overflow-x: auto;
             max-width: 100%;
         }
+        /* GitHub风格的热力图样式 */
+        .heatmap-container {
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 1000px;
+            box-sizing: border-box;
+            position: relative;
+        }
+        .heatmap-title {
+            font-size: 1.2em;
+            color: #333;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+        #heatmap-container {
+            width: 100%;
+            height: auto;
+            min-height: 140px;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px 0;
+        }
+        .cal-heatmap-container {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            margin: 0 auto;
+        }
+        .cal-heatmap-container svg {
+            height: auto;
+        }
+        .cal-heatmap-container .graph-label {
+            font-size: 10px;
+            fill: #767676;
+        }
+        .cal-heatmap-container .graph-rect {
+            shape-rendering: geometricPrecision;
+        }
+        .cal-heatmap-container .subdomain-text {
+            font-size: 8px;  /* 减小文字大小 */
+            fill: #767676;
+        }
+        .contribution-legend {
+            display: flex;
+            align-items: center;
+            justify-content: center;  /* 居中显示图例 */
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #eee;
+            font-size: 11px;
+            color: #767676;
+        }
+        .contribution-legend span {
+            margin-right: 5px;
+        }
+        .contribution-legend .legend-item {
+            width: 10px;
+            height: 10px;
+            margin: 0 2px;
+            display: inline-block;
+        }
+        /* 自定义tooltip样式 */
+        .cal-heatmap-container .ch-tooltip {
+            padding: 5px 10px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 1000;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Markdown to Flashcards</h1>
+        
+        <!-- 热力图容器 -->
+        <div class="heatmap-container">
+            <h2 class="heatmap-title">复习记录热力图</h2>
+            <div id="heatmap-container"></div>
+            <div class="contribution-legend">
+                <span>Less</span>
+                <div class="legend-item" style="background-color: #ebedf0"></div>
+                <div class="legend-item" style="background-color: #9be9a8"></div>
+                <div class="legend-item" style="background-color: #40c463"></div>
+                <div class="legend-item" style="background-color: #30a14e"></div>
+                <div class="legend-item" style="background-color: #216e39"></div>
+                <span>More</span>
+            </div>
+        </div>
         
         <div class="tabs">
             <button class="tab active" onclick="showTab('upload')">上传新文件</button>
@@ -253,20 +346,13 @@
     </div>
 
     <script>
-        let startTime;
-        let timerInterval;
-        
-        function showTab(tabName) {
-            // 移除所有标签页和内容的active类
-            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            
-            // 添加active类到选中的标签页和内容
-            document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
-            document.getElementById(`${tabName}Tab`).classList.add('active');
-        }
+        // 初始化全局变量
+        let startTime = null;
+        let timerInterval = null;
 
+        // 计时器相关函数
         function updateTimer() {
+            if (!startTime) return;
             const now = new Date();
             const diff = Math.floor((now - startTime) / 1000);
             const minutes = Math.floor(diff / 60).toString().padStart(2, '0');
@@ -276,6 +362,7 @@
 
         function startTimer() {
             startTime = new Date();
+            if (timerInterval) clearInterval(timerInterval);
             timerInterval = setInterval(updateTimer, 1000);
         }
 
@@ -284,7 +371,150 @@
                 clearInterval(timerInterval);
                 timerInterval = null;
             }
+            startTime = null;
         }
+
+        // GitHub风格的热力图实现
+        async function initHeatmap() {
+            try {
+                console.log('Initializing heatmap...');
+                const response = await fetch('/api/heatmap');
+                const result = await response.json();
+                
+                console.log('Received heatmap data:', result);
+                
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to fetch heatmap data');
+                }
+
+                if (!result.data || !Array.isArray(result.data)) {
+                    console.error('Invalid data format:', result.data);
+                    throw new Error('Invalid data format received from server');
+                }
+
+                // 准备数据
+                data = {};  // 使用全局变量存储数据
+                result.data.forEach(item => {
+                    const timestamp = Math.floor(new Date(item.date).getTime() / 1000);
+                    data[timestamp] = item.count;
+                });
+
+                console.log('Processed data for Cal-Heatmap:', data);
+                console.log('Data points count:', Object.keys(data).length);
+
+                // 找到最早的记录日期
+                const dates = result.data.map(item => new Date(item.date));
+                earliestDate = dates.length > 0 ? new Date(Math.min(...dates)) : new Date();
+                
+                console.log('Earliest date:', earliestDate);
+
+                // 检查Cal-Heatmap是否可用
+                if (typeof CalHeatMap !== 'function') {
+                    console.error('CalHeatMap is not loaded!');
+                    throw new Error('CalHeatMap library is not available');
+                }
+
+                // 使用resizeHeatmap初始化
+                resizeHeatmap();
+
+            } catch (error) {
+                console.error('Error initializing heatmap:', error);
+                const container = document.getElementById('heatmap-container');
+                if (container) {
+                    container.innerHTML = `<div style="color: red;">加载热力图时出错: ${error.message}</div>`;
+                }
+            }
+        }
+
+        // 添加自动刷新功能
+        function setupHeatmapAutoRefresh() {
+            // 每分钟刷新一次
+            setInterval(initHeatmap, 60000);
+            
+            // 页面可见性改变时刷新
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    initHeatmap();
+                }
+            });
+        }
+
+        // 添加窗口大小变化时重新计算热力图大小的函数
+        function resizeHeatmap() {
+            const container = document.getElementById('heatmap-container');
+            const containerWidth = container.offsetWidth;
+            const cellSize = Math.max(10, Math.floor(containerWidth / (12 * 31 + 11 * 3)));
+            
+            container.innerHTML = '';
+            
+            const cal = new CalHeatMap();
+            cal.init({
+                itemSelector: '#heatmap-container',
+                domain: 'month',
+                subDomain: 'day',
+                start: earliestDate,
+                range: 12,
+                cellSize: cellSize,
+                cellPadding: 2,
+                domainGutter: Math.max(3, Math.floor(cellSize / 3)),
+                legendColors: {
+                    min: '#ebedf0',
+                    max: '#216e39',
+                    empty: '#ebedf0'
+                },
+                legend: [1, 3, 5, 7],
+                data: data,
+                tooltip: true,
+                itemName: ['contribution', 'contributions'],
+                subDomainTextFormat: '',
+                domainLabelFormat: '%Y-%m',
+                label: {
+                    position: 'top',
+                    offset: {
+                        x: 0,
+                        y: -2
+                    }
+                },
+                displayLegend: false,
+                // 自定义tooltip格式
+                subDomainTitleFormat: {
+                    empty: '{date}：0 contributions',
+                    filled: '{date}：{count} contributions'
+                },
+                // 自定义日期格式
+                date: {
+                    locale: {
+                        format: {
+                            date: '%Y-%m-%d'  // 年-月-日 格式
+                        }
+                    }
+                }
+            });
+        }
+
+        // 页面加载和返回时刷新热力图
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('DOM loaded, initializing heatmap...');
+            // 确保所有依赖都已加载
+            if (typeof d3 === 'undefined') {
+                console.error('D3.js is not loaded!');
+            }
+            if (typeof CalHeatMap === 'undefined') {
+                console.error('CalHeatMap is not loaded!');
+            }
+            initHeatmap();
+            setupHeatmapAutoRefresh();
+        });
+
+        // 窗口大小改变时重新渲染热力图
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            // 使用防抖，避免频繁刷新
+            clearTimeout(resizeTimeout);
+            resizeTimeout = setTimeout(() => {
+                initHeatmap();
+            }, 250);
+        });
 
         function showError(message) {
             const errorElement = document.querySelector('.error-message');
@@ -302,6 +532,32 @@
             setTimeout(() => {
                 successElement.style.display = 'none';
             }, 5000);
+        }
+
+        function showTab(tabName) {
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`${tabName}Tab`).classList.add('active');
+        }
+
+        function handleStreamMessage(data) {
+            switch (data.type) {
+                case 'status':
+                    document.querySelector('.status-message').textContent = data.data;
+                    break;
+                
+                case 'result':
+                    stopTimer();
+                    window.location.href = `/practice/${data.filename}`;
+                    break;
+                
+                case 'error':
+                    stopTimer();
+                    showError(data.data);
+                    document.querySelector('.progress-section').style.display = 'none';
+                    break;
+            }
         }
 
         async function selectFile(filename) {
@@ -344,6 +600,7 @@
             }
         }
 
+        // 文件上传处理
         document.getElementById('uploadForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -394,29 +651,19 @@
             }
         });
 
-        function handleStreamMessage(data) {
-            switch (data.type) {
-                case 'status':
-                    document.querySelector('.status-message').textContent = data.data;
-                    break;
-                
-                case 'result':
-                    stopTimer();
-                    // 重定向到练习页面
-                    window.location.href = `/practice/${data.filename}`;
-                    break;
-                
-                case 'error':
-                    stopTimer();
-                    showError(data.data);
-                    document.querySelector('.progress-section').style.display = 'none';
-                    break;
-            }
-        }
-
         function displayFlashcards(flashcards) {
             const container = document.getElementById('flashcardsContainer');
             container.innerHTML = '';
+
+            // 添加闪卡总数显示
+            const totalCount = document.createElement('div');
+            totalCount.className = 'flashcard-count';
+            totalCount.style.textAlign = 'center';
+            totalCount.style.marginBottom = '20px';
+            totalCount.style.fontSize = '1.2em';
+            totalCount.style.color = '#333';
+            totalCount.innerHTML = `共加载 ${flashcards.length} 张闪卡`;
+            container.appendChild(totalCount);
 
             flashcards.forEach((card, index) => {
                 const cardElement = document.createElement('div');

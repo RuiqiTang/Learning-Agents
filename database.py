@@ -4,7 +4,7 @@ from config import DB_CONFIG, FLASHCARDS_FOLDER
 import logging
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +78,63 @@ class Database:
                     ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
                 """)
                 
+                # Create heatmap table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS heatmap (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL,
+                        review_count INT NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE INDEX idx_date (date)
+                    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+                """)
+                
                 connection.commit()
                 logger.info("Database tables initialized successfully")
+
+                # 初始化热力图数据
+                self.init_heatmap_data()
+                
         except Exception as e:
             logger.error(f"Error initializing database: {str(e)}")
+            raise
+        finally:
+            if connection:
+                connection.close()
+
+    def init_heatmap_data(self):
+        """从review_records表初始化热力图数据"""
+        connection = None
+        try:
+            connection = self.connect()
+            with connection.cursor() as cursor:
+                # 获取所有复习记录的日期
+                sql = """
+                    SELECT DATE(review_date) as date, COUNT(*) as count
+                    FROM review_records
+                    GROUP BY DATE(review_date)
+                """
+                cursor.execute(sql)
+                review_dates = cursor.fetchall()
+
+                # 更新热力图数据
+                for record in review_dates:
+                    sql = """
+                        INSERT INTO heatmap (date, review_count)
+                        VALUES (%s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        review_count = VALUES(review_count),
+                        updated_at = CURRENT_TIMESTAMP
+                    """
+                    cursor.execute(sql, (record['date'], record['count']))
+                
+                connection.commit()
+                logger.info(f"Initialized heatmap data with {len(review_dates)} days")
+        except Exception as e:
+            logger.error(f"Error initializing heatmap data: {str(e)}")
+            if connection:
+                connection.rollback()
             raise
         finally:
             if connection:
@@ -161,14 +214,55 @@ class Database:
                 connection.close()
 
     def get_flashcards_by_source(self, source_file):
-        """Get all flashcards for a specific source file"""
+        """获取指定源文件的所有闪卡，支持模糊匹配文件名，并按问题去重选择最新版本"""
         connection = None
         try:
             connection = self.connect()
             with connection.cursor() as cursor:
-                sql = "SELECT * FROM flashcards WHERE source_file = %s ORDER BY created_at"
-                cursor.execute(sql, (source_file,))
-                return cursor.fetchall()
+                # 首先获取所有匹配的卡片中每个问题的最新版本
+                sql = """
+                    WITH LatestCards AS (
+                        SELECT question, MAX(updated_at) as latest_update
+                        FROM flashcards 
+                        WHERE source_file LIKE %s
+                        GROUP BY question
+                    )
+                    SELECT f.id, f.question, f.answer, f.importance, f.probability,
+                           f.created_at, f.updated_at, f.source_file
+                    FROM flashcards f
+                    INNER JOIN LatestCards lc 
+                        ON f.question = lc.question 
+                        AND f.updated_at = lc.latest_update
+                    ORDER BY f.updated_at DESC, f.id
+                """
+                # 添加通配符进行模糊匹配
+                search_pattern = f"{source_file}%"
+                cursor.execute(sql, (search_pattern,))
+                cards = cursor.fetchall()
+                
+                # 获取每个卡片的最新学习状态
+                for card in cards:
+                    sql = """
+                        SELECT review_date, next_review, difficulty, 
+                               ease_factor, review_interval
+                        FROM review_records
+                        WHERE flashcard_id = %s
+                        ORDER BY review_date DESC
+                        LIMIT 1
+                    """
+                    cursor.execute(sql, (card['id'],))
+                    learning_state = cursor.fetchone()
+                    
+                    # 添加学习状态到卡片数据中
+                    card['learning_state'] = {
+                        'review_count': 0,  # 默认值
+                        'last_review': learning_state['review_date'] if learning_state else None,
+                        'next_review': learning_state['next_review'] if learning_state else None,
+                        'ease_factor': learning_state['ease_factor'] if learning_state else 2.5,
+                        'interval': learning_state['review_interval'] if learning_state else 0
+                    }
+                    
+                return cards
         except Exception as e:
             logger.error(f"Error getting flashcards: {str(e)}")
             raise
@@ -313,11 +407,12 @@ class Database:
                 connection.close()
 
     def save_review_record(self, flashcard_id, review_data):
-        """Save a review record"""
+        """Save a review record and increment heatmap count"""
         connection = None
         try:
             connection = self.connect()
             with connection.cursor() as cursor:
+                # 保存复习记录
                 sql = """
                     INSERT INTO review_records 
                     (flashcard_id, review_date, next_review, difficulty, ease_factor, review_interval)
@@ -331,10 +426,27 @@ class Database:
                     review_data['ease_factor'],
                     review_data['interval']
                 ))
+                
+                # 获取复习记录的日期
+                review_date = datetime.strptime(review_data['review_date'], '%Y-%m-%d %H:%M:%S').date()
+                
+                # 更新热力图数据 - 增加当天的计数
+                sql = """
+                    INSERT INTO heatmap (date, review_count)
+                    VALUES (%s, 1)
+                    ON DUPLICATE KEY UPDATE
+                    review_count = review_count + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+                cursor.execute(sql, (review_date,))
+                
                 connection.commit()
+                logger.info(f"Saved review record and incremented heatmap count for date {review_date}")
                 return cursor.lastrowid
         except Exception as e:
             logger.error(f"Error saving review record: {str(e)}")
+            if connection:
+                connection.rollback()
             raise
         finally:
             if connection:
@@ -409,8 +521,12 @@ class Database:
             if connection:
                 connection.close()
 
-    def get_due_flashcards(self, now=None):
-        """获取到期需要复习的卡片"""
+    def get_due_flashcards(self, source_file=None, now=None):
+        """获取到期需要复习的卡片
+        Args:
+            source_file: 源文件名前缀，用于筛选特定文件的卡片
+            now: 当前时间，用于判断是否到期
+        """
         if now is None:
             now = datetime.now()
             
@@ -418,27 +534,128 @@ class Database:
         try:
             connection = self.connect()
             with connection.cursor() as cursor:
-                sql = """
-                    SELECT f.*, COALESCE(r.next_review, f.created_at) as next_review,
-                           COALESCE(r.ease_factor, 2.5) as ease_factor,
-                           COALESCE(r.review_interval, 0) as review_interval
+                # 准备查询参数和条件
+                params = []
+                source_file_condition = ""
+                if source_file:
+                    source_file_condition = "AND source_file LIKE %s"
+                    params.append(f"{source_file}%")
+                    params.append(f"{source_file}%")  # 需要两次，因为SQL中使用了两次条件
+                
+                # 构建SQL查询
+                sql = f"""
+                    WITH LatestCards AS (
+                        SELECT question, MAX(updated_at) as latest_update
+                        FROM flashcards 
+                        WHERE 1=1
+                        {source_file_condition}
+                        GROUP BY question
+                    )
+                    SELECT f.*, 
+                           r.next_review,
+                           r.ease_factor,
+                           r.review_interval,
+                           r.review_date as last_review
                     FROM flashcards f
+                    INNER JOIN LatestCards lc 
+                        ON f.question = lc.question 
+                        AND f.updated_at = lc.latest_update
                     LEFT JOIN (
-                        SELECT flashcard_id, next_review, ease_factor, review_interval
+                        SELECT r1.*
                         FROM review_records r1
-                        WHERE review_date = (
-                            SELECT MAX(review_date)
-                            FROM review_records r2
-                            WHERE r2.flashcard_id = r1.flashcard_id
-                        )
+                        INNER JOIN (
+                            SELECT flashcard_id, MAX(review_date) as max_review_date
+                            FROM review_records
+                            GROUP BY flashcard_id
+                        ) r2 ON r1.flashcard_id = r2.flashcard_id 
+                        AND r1.review_date = r2.max_review_date
                     ) r ON f.id = r.flashcard_id
-                    WHERE COALESCE(r.next_review, f.created_at) <= %s
-                    ORDER BY COALESCE(r.next_review, f.created_at) ASC
+                    WHERE 1=1
+                        {source_file_condition}
+                    ORDER BY 
+                        CASE 
+                            WHEN r.next_review IS NULL THEN f.created_at
+                            ELSE r.next_review
+                        END ASC
                 """
-                cursor.execute(sql, (now,))
+                
+                # 执行查询
+                cursor.execute(sql, params)
                 return cursor.fetchall()
+                
         except Exception as e:
             logger.error(f"Error getting due flashcards: {str(e)}")
+            raise
+        finally:
+            if connection:
+                connection.close()
+
+    def update_heatmap(self, date=None):
+        """更新指定日期的复习记录数量"""
+        if date is None:
+            date = datetime.now().date()
+        
+        logger.debug(f"Updating heatmap for date: {date}")
+        
+        connection = None
+        try:
+            connection = self.connect()
+            with connection.cursor() as cursor:
+                # 获取指定日期的复习记录数量
+                sql = """
+                    SELECT COUNT(*) as count
+                    FROM review_records
+                    WHERE DATE(review_date) = %s
+                """
+                cursor.execute(sql, (date,))
+                result = cursor.fetchone()
+                review_count = result['count']
+                logger.debug(f"Found {review_count} reviews for date {date}")
+                
+                # 更新或插入heatmap记录
+                sql = """
+                    INSERT INTO heatmap (date, review_count)
+                    VALUES (%s, %s)
+                    ON DUPLICATE KEY UPDATE
+                    review_count = VALUES(review_count),
+                    updated_at = CURRENT_TIMESTAMP
+                """
+                cursor.execute(sql, (date, review_count))
+                connection.commit()
+                logger.debug(f"Updated heatmap record for date {date} with count {review_count}")
+                
+                return review_count
+        except Exception as e:
+            logger.error(f"Error updating heatmap: {str(e)}")
+            if connection:
+                connection.rollback()
+            raise
+        finally:
+            if connection:
+                connection.close()
+
+    def get_heatmap_data(self, start_date=None, end_date=None):
+        """获取指定日期范围的heatmap数据"""
+        connection = None
+        try:
+            connection = self.connect()
+            with connection.cursor() as cursor:
+                # 首先更新今天的数据
+                today_count = self.update_heatmap(datetime.now().date())
+                logger.debug(f"Today's review count: {today_count}")
+                
+                # 获取所有热力图数据
+                sql = """
+                    SELECT date, review_count
+                    FROM heatmap
+                    ORDER BY date ASC
+                """
+                cursor.execute(sql)
+                results = cursor.fetchall()
+                logger.debug(f"Found {len(results)} days with review data")
+                return results
+        except Exception as e:
+            logger.error(f"Error getting heatmap data: {str(e)}")
             raise
         finally:
             if connection:

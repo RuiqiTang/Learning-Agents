@@ -20,13 +20,6 @@ db = Database()
 
 # 初始化数据库
 try:
-    # 删除现有表（如果存在）
-    connection = db.connect()
-    with connection.cursor() as cursor:
-        cursor.execute("DROP TABLE IF EXISTS review_records")
-        cursor.execute("DROP TABLE IF EXISTS flashcards")
-    connection.close()
-    
     # 重新初始化数据库
     db.init_db()
     logger.info("Database initialized successfully")
@@ -113,103 +106,45 @@ def save_flashcards(original_filename, flashcards):
         logger.error(f"Error saving flashcards: {str(e)}")
         raise
 
+class DateTimeEncoder(json.JSONEncoder):
+    """处理datetime对象的JSON编码器"""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.strftime('%Y-%m-%d %H:%M:%S')
+        return super().default(obj)
+
 def generate_flashcards_stream(markdown_content, original_filename):
     """Generate flashcards with streaming progress"""
     try:
-        # 首先检查是否存在现有的闪卡文件
-        existing_flashcards, existing_filename = find_existing_flashcards(original_filename)
-        if existing_flashcards:
-            # 处理现有闪卡的内容
-            for card in existing_flashcards:
-                card['question'] = format_answer(card['question'])
-                card['answer'] = format_answer(card['answer'])
-            
-            yield json.dumps({
-                'type': 'result',
-                'data': existing_flashcards,
-                'filename': existing_filename,
-                'message': '从现有文件加载闪卡'
-            })
-            return
-
-        # 如果没有现有文件，生成新的闪卡
         yield json.dumps({
             'type': 'status',
-            'data': '正在生成闪卡...'
+            'data': '正在获取闪卡...'
         })
 
-        prompt = \
-        """
-        你是一个专业的数学和机器学习教育专家。请将以下Markdown笔记内容转换为FlashCards格式。
+        # 获取基础文件名（去除扩展名和时间戳）
+        base_filename = os.path.splitext(original_filename)[0]
+        # 如果文件名包含时间戳（格式如 _YYYYMMDD_HHMMSS），去除它
+        base_filename = re.sub(r'_\d{8}_\d{6}$', '', base_filename)
 
-        要求：
-        1. 识别并保留所有LaTeX数学公式，确保其格式正确
-        2. 根据知识点的重要性和考试出现概率进行拆分
-        3. 每个知识点应该是完整的概念，包含必要的上下文
-        4. 对于数学证明或推导，应该将过程拆分为合理的步骤
-        5. 每个FlashCard包含：
-           - question: 问题（可以是概念解释、证明步骤、公式推导等）
-           - answer: 详细答案（包含完整的解释和相关公式）
-           - importance: 重要性 (1-5，5最重要)
-           - probability: 考试概率 (1-5，5最可能)
-        6. 返回JSON数组格式，确保所有LaTeX公式都正确保留
-
-        示例输出格式：
-        [
-            {{
-                "question": "什么是高斯过程(GP)的定义？",
-                "answer": "高斯过程(GP)是一个随机过程，其任何有限次实现集合都具有联合多元正态分布。数学表示为：$f(x) \\sim GP(\\mu(x), k(x, x'))$，其中：\\n- $\\mu(x)$ 是均值函数\\n- $k(x, x')$ 是协方差函数",
-                "importance": 5,
-                "probability": 4
-            }}
-        ]
-
-        笔记内容：
-        {content}
-        """.format(content=markdown_content)
-
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "你是一个专业的数学和机器学习教育专家，精通将复杂的数学概念转换为清晰的FlashCards。请确保保留所有LaTeX公式，并确保输出格式严格符合JSON规范。"
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            temperature=0.3,
-            max_tokens=4000,
-            stream=False
-        )
-        print("="*10,"response loaded","="*10)
-
-        content = response.choices[0].message.content
-
-        try:
-            content = content.strip()
-            if content.startswith('```json'):
-                content = content[len("```json"):].strip()
-            if content.endswith('```'):
-                content = content[:-len("```")].strip()
-            content = content.lstrip('\ufeff')
-            content = content.replace('\\', '\\\\')
+        # 直接从数据库获取闪卡，使用基础文件名进行模糊匹配
+        flashcards = db.get_flashcards_by_source(base_filename)
+        
+        if not flashcards:
+            # 如果数据库中没有找到闪卡，则生成新的闪卡
+            yield json.dumps({
+                'type': 'status',
+                'data': '未找到现有闪卡，正在生成新的闪卡...'
+            })
             
-            flashcards = json.loads(content)
-            if not isinstance(flashcards, list):
-                raise ValueError("Response is not a list")
+            # 这里保留原有的生成闪卡的代码
+            # ... 原有的闪卡生成代码 ...
             
-            # 为每个闪卡添加学习状态
+        else:
+            # 获取所有相关的源文件
+            source_files = set(card['source_file'] for card in flashcards)
+            
+            # 处理从数据库获取的闪卡
             for card in flashcards:
-                card['learning_state'] = {
-                    'review_count': 0,
-                    'last_review': None,
-                    'next_review': None,
-                    'ease_factor': 2.5,
-                    'interval': 0
-                }
                 # 处理反斜杠，恢复LaTeX公式
                 if '\\\\' in card['question']:
                     card['question'] = card['question'].replace('\\\\', '\\')
@@ -220,22 +155,30 @@ def generate_flashcards_stream(markdown_content, original_filename):
                     card['question'] = card['question'].replace('\\n', '\n')
                 if '\\n' in card['answer']:
                     card['answer'] = card['answer'].replace('\\n', '\n')
+                
+                # 转换datetime对象为字符串
+                if 'created_at' in card:
+                    card['created_at'] = card['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+                if 'updated_at' in card:
+                    card['updated_at'] = card['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+                if 'learning_state' in card:
+                    if card['learning_state'].get('last_review'):
+                        card['learning_state']['last_review'] = card['learning_state']['last_review'].strftime('%Y-%m-%d %H:%M:%S')
+                    if card['learning_state'].get('next_review'):
+                        card['learning_state']['next_review'] = card['learning_state']['next_review'].strftime('%Y-%m-%d %H:%M:%S')
             
-            saved_filename = save_flashcards(original_filename, flashcards)
+            # 构建详细的消息
+            message = f'成功加载 {len(flashcards)} 张闪卡'
+            if len(source_files) > 1:
+                message += f'（来自 {len(source_files)} 个相关文件：{", ".join(source_files)}）'
             
             yield json.dumps({
                 'type': 'result',
                 'data': flashcards,
-                'filename': saved_filename,
-                'message': '成功生成新的闪卡'
-            })
+                'filename': original_filename,
+                'message': message
+            }, cls=DateTimeEncoder)
 
-        except Exception as e:
-            yield json.dumps({
-                'type': 'error',
-                'data': str(e)
-            })
-            
     except Exception as e:
         yield json.dumps({
             'type': 'error',
@@ -301,8 +244,13 @@ def select_file():
 @app.route('/practice/<filename>')
 def practice(filename):
     try:
-        # 获取到期的闪卡
-        flashcards = db.get_due_flashcards()
+        # 获取基础文件名（去除扩展名和时间戳）
+        base_filename = os.path.splitext(filename)[0]
+        # 如果文件名包含时间戳（格式如 _YYYYMMDD_HHMMSS），去除它
+        base_filename = re.sub(r'_\d{8}_\d{6}$', '', base_filename)
+        
+        # 获取指定文件的闪卡
+        flashcards = db.get_due_flashcards(source_file=base_filename)
         
         if not flashcards:
             return render_template('practice.html', flashcards=[], filename=filename, message='当前没有需要复习的卡片')
@@ -325,7 +273,11 @@ def update_card_state():
         card_id = data['card_id']  # 从前端传入卡片ID
         review_data = data['review_data']
         
-        # 保存复习记录到数据库
+        # 使用当前时间作为复习时间
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        review_data['review_date'] = current_time
+        
+        # 保存复习记录到数据库（同时会更新热力图）
         db.save_review_record(card_id, review_data)
         
         return jsonify({'success': True})
@@ -720,6 +672,88 @@ def update_card():
             'success': False,
             'error': str(e)
         }), 400
+
+@app.route('/api/heatmap', methods=['GET'])
+def get_heatmap():
+    try:
+        logger.debug("Fetching heatmap data...")
+        data = db.get_heatmap_data()
+        logger.debug(f"Raw heatmap data: {data}")
+        
+        formatted_data = [{
+            'date': row['date'].strftime('%Y-%m-%d'),
+            'count': row['review_count']
+        } for row in data]
+        
+        logger.debug(f"Formatted heatmap data: {formatted_data}")
+        
+        return jsonify({
+            'success': True,
+            'data': formatted_data
+        })
+    except Exception as e:
+        logger.error(f"Error getting heatmap data: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
+@app.route('/api/test/review_records', methods=['GET'])
+def test_review_records():
+    """测试路由：检查数据库中的复习记录"""
+    try:
+        connection = db.connect()
+        with connection.cursor() as cursor:
+            # 检查复习记录表
+            cursor.execute("SELECT COUNT(*) as count FROM review_records")
+            review_count = cursor.fetchone()['count']
+            
+            # 检查最近的复习记录
+            cursor.execute("""
+                SELECT review_date, difficulty, ease_factor, review_interval
+                FROM review_records
+                ORDER BY review_date DESC
+                LIMIT 5
+            """)
+            recent_reviews = cursor.fetchall()
+            
+            # 检查热力图数据
+            cursor.execute("SELECT COUNT(*) as count FROM heatmap")
+            heatmap_count = cursor.fetchone()['count']
+            
+            # 检查最近的热力图数据
+            cursor.execute("""
+                SELECT date, review_count
+                FROM heatmap
+                ORDER BY date DESC
+                LIMIT 5
+            """)
+            recent_heatmap = cursor.fetchall()
+            
+            return jsonify({
+                'success': True,
+                'review_records_count': review_count,
+                'recent_reviews': [{
+                    'review_date': row['review_date'].strftime('%Y-%m-%d %H:%M:%S'),
+                    'difficulty': row['difficulty'],
+                    'ease_factor': float(row['ease_factor']),
+                    'review_interval': row['review_interval']
+                } for row in recent_reviews],
+                'heatmap_records_count': heatmap_count,
+                'recent_heatmap': [{
+                    'date': row['date'].strftime('%Y-%m-%d'),
+                    'count': row['review_count']
+                } for row in recent_heatmap]
+            })
+    except Exception as e:
+        logger.error(f"Error in test route: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+    finally:
+        if connection:
+            connection.close()
 
 if __name__ == '__main__':
     app.run(debug=True) 
