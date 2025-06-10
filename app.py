@@ -8,19 +8,38 @@ from datetime import datetime
 import glob
 import logging
 import re
+from database import Database
+from config import UPLOAD_FOLDER, FLASHCARDS_FOLDER
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+db = Database()
+
+# 初始化数据库
+try:
+    # 删除现有表（如果存在）
+    connection = db.connect()
+    with connection.cursor() as cursor:
+        cursor.execute("DROP TABLE IF EXISTS review_records")
+        cursor.execute("DROP TABLE IF EXISTS flashcards")
+    connection.close()
+    
+    # 重新初始化数据库
+    db.init_db()
+    logger.info("Database initialized successfully")
+    
+    # 导入现有的闪卡数据
+    imported_count = db.import_from_json()
+    logger.info(f"Imported {imported_count} flashcards from existing JSON files")
+except Exception as e:
+    logger.error(f"Error during startup: {str(e)}")
+    raise
 
 # Load environment variables
 load_dotenv()
-
-# Configure folders
-UPLOAD_FOLDER = 'assets'
-FLASHCARDS_FOLDER = 'flashcards'
 
 # Configure OpenAI client for DeepSeek
 api_key = os.getenv('DEEPSEEK_API_KEY')
@@ -30,13 +49,10 @@ if not api_key:
 
 client = OpenAI(
     api_key=api_key,
-    base_url="https://api.deepseek.com/v1"  # 更新为正确的API端点
+    base_url="https://api.deepseek.com/v1"
 )
 
-# Ensure directories exist
-for folder in [UPLOAD_FOLDER, FLASHCARDS_FOLDER]:
-    os.makedirs(folder, exist_ok=True)
-
+# Configure app
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
 
@@ -60,39 +76,38 @@ def find_existing_flashcards(filename):
     return None, None
 
 def save_flashcards(original_filename, flashcards):
-    """Save flashcards to a JSON file"""
-    base_name = os.path.splitext(original_filename)[0]
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    filename = f"{base_name}_{timestamp}_flashcards.json"
-    filepath = os.path.join(FLASHCARDS_FOLDER, filename)
-    
-    # 在保存前处理数据
-    processed_flashcards = []
-    for card in flashcards:
-        # 处理换行符：确保文本中的\n被保留为实际的换行符
-        processed_card = {
-            'question': card['question'].strip().replace('\\n', '\n'),
-            'answer': card['answer'].strip().replace('\\n', '\n'),
-            'importance': card['importance'],
-            'probability': card['probability'],
-            'learning_state': card['learning_state']
-        }
+    """Save flashcards to database and JSON file"""
+    try:
+        # 保存到数据库
+        for card in flashcards:
+            # 检查卡片是否已存在
+            if not db.flashcard_exists(original_filename, card['question']):
+                flashcard_data = {
+                    'source_file': original_filename,
+                    'question': card['question'],
+                    'answer': card['answer'],
+                    'importance': card['importance'],
+                    'probability': card['probability'],
+                    'review_count': card.get('learning_state', {}).get('review_count', 0),
+                    'last_review': card.get('learning_state', {}).get('last_review'),
+                    'next_review': card.get('learning_state', {}).get('next_review'),
+                    'ease_factor': card.get('learning_state', {}).get('ease_factor', 2.5)
+                }
+                db.save_flashcard(flashcard_data)
         
-        # 确保LaTeX公式被正确保存
-        def normalize_latex(text):
-            # 确保LaTeX公式中的反斜杠是单个的
-            text = text.replace('\\\\', '\\')
-            return text
+        # 同时保存到JSON文件（保持向后兼容）
+        base_name = os.path.splitext(original_filename)[0]
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{base_name}_{timestamp}_flashcards.json"
+        filepath = os.path.join(FLASHCARDS_FOLDER, filename)
         
-        processed_card['question'] = normalize_latex(processed_card['question'])
-        processed_card['answer'] = normalize_latex(processed_card['answer'])
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(flashcards, f, ensure_ascii=False, indent=2)
         
-        processed_flashcards.append(processed_card)
-    
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(processed_flashcards, f, ensure_ascii=False, indent=2)
-    
-    return filename
+        return filename
+    except Exception as e:
+        logger.error(f"Error saving flashcards: {str(e)}")
+        raise
 
 def generate_flashcards_stream(markdown_content, original_filename):
     """Generate flashcards with streaming progress"""
@@ -225,22 +240,70 @@ def generate_flashcards_stream(markdown_content, original_filename):
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # 获取assets目录中的所有Markdown文件
+    markdown_files = []
+    for ext in ALLOWED_EXTENSIONS:
+        markdown_files.extend(glob.glob(os.path.join(app.config['UPLOAD_FOLDER'], f'*.{ext}')))
+    markdown_files = [os.path.basename(f) for f in markdown_files]
+    
+    # 获取数据库中的文件
+    db_files = db.get_available_files()
+    
+    return render_template('index.html', 
+                         markdown_files=markdown_files,
+                         db_files=db_files)
+
+@app.route('/api/list_files', methods=['GET'])
+def list_files():
+    try:
+        # 获取assets目录中的所有Markdown文件
+        markdown_files = []
+        for ext in ALLOWED_EXTENSIONS:
+            markdown_files.extend(glob.glob(os.path.join(app.config['UPLOAD_FOLDER'], f'*.{ext}')))
+        markdown_files = [os.path.basename(f) for f in markdown_files]
+        
+        return jsonify({
+            'success': True,
+            'files': markdown_files
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
+
+@app.route('/api/select_file', methods=['POST'])
+def select_file():
+    try:
+        data = request.json
+        filename = data.get('filename')
+        if not filename:
+            return jsonify({'error': 'No filename provided'}), 400
+        
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+        
+        with open(file_path, 'r', encoding='utf-8') as f:
+            markdown_content = f.read()
+        
+        return Response(
+            stream_with_context(generate_flashcards_stream(markdown_content, filename)),
+            mimetype='text/event-stream'
+        )
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
 
 @app.route('/practice/<filename>')
 def practice(filename):
     try:
-        filepath = os.path.join(FLASHCARDS_FOLDER, filename)
-        if not os.path.exists(filepath):
-            return render_template('error.html', message='找不到闪卡文件')
+        # 获取到期的闪卡
+        flashcards = db.get_due_flashcards()
         
-        with open(filepath, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-            if content.endswith('%'):
-                content = content[:-1]
-            flashcards = json.loads(content)
+        if not flashcards:
+            return render_template('practice.html', flashcards=[], filename=filename, message='当前没有需要复习的卡片')
         
-        # 处理从文件读取的数据
+        # 处理从数据库读取的数据
         for card in flashcards:
             # 确保问题和答案是字符串并处理格式
             card['question'] = format_answer(str(card['question']).strip())
@@ -248,28 +311,22 @@ def practice(filename):
         
         return render_template('practice.html', flashcards=flashcards, filename=filename)
     except Exception as e:
-        print(f"Error in practice route: {str(e)}")
+        logger.error(f"Error in practice route: {str(e)}")
         return render_template('error.html', message=str(e))
 
 @app.route('/api/update_card_state', methods=['POST'])
 def update_card_state():
     try:
         data = request.json
-        filename = data['filename']
-        card_index = data['card_index']
-        new_state = data['new_state']
+        card_id = data['card_id']  # 从前端传入卡片ID
+        review_data = data['review_data']
         
-        filepath = os.path.join(FLASHCARDS_FOLDER, filename)
-        with open(filepath, 'r', encoding='utf-8') as f:
-            flashcards = json.load(f)
-        
-        flashcards[card_index]['learning_state'] = new_state
-        
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(flashcards, f, ensure_ascii=False, indent=2)
+        # 保存复习记录到数据库
+        db.save_review_record(card_id, review_data)
         
         return jsonify({'success': True})
     except Exception as e:
+        logger.error(f"Error in update_card_state: {str(e)}")
         return jsonify({'error': str(e)}), 400
 
 @app.route('/upload', methods=['POST'])
@@ -577,44 +634,82 @@ def ask_deepseek():
 def update_card():
     try:
         data = request.json
-        filename = data['filename']
-        card_index = data['card_index']
+        card_id = data['card_id']
         update_type = data['update_type']  # 'append' 或 'new'
         new_content = data['content']
-        
-        filepath = os.path.join(FLASHCARDS_FOLDER, filename)
-        with open(filepath, 'r', encoding='utf-8') as f:
-            flashcards = json.load(f)
+        question = data.get('question', '')
         
         if update_type == 'append':
-            # 在现有卡片中添加新内容
-            card = flashcards[card_index]
-            card['answer'] = format_answer(card['answer'].strip() + '\n\n补充内容：\n' + new_content.strip())
+            # 获取当前卡片
+            connection = db.connect()
+            try:
+                with connection.cursor() as cursor:
+                    # 获取原卡片内容
+                    sql = "SELECT * FROM flashcards WHERE id = %s"
+                    cursor.execute(sql, (card_id,))
+                    card = cursor.fetchone()
+                    
+                    if not card:
+                        raise ValueError("Card not found")
+                    
+                    # 更新答案内容
+                    new_answer = card['answer'] + '\n\n补充内容：\n' + new_content
+                    sql = "UPDATE flashcards SET answer = %s WHERE id = %s"
+                    cursor.execute(sql, (new_answer, card_id))
+                    connection.commit()
+                    
+                    # 获取更新后的卡片
+                    cursor.execute("SELECT * FROM flashcards WHERE id = %s", (card_id,))
+                    updated_card = cursor.fetchone()
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': '已补充到当前卡片',
+                        'card': updated_card
+                    })
+            finally:
+                connection.close()
         else:  # 'new'
             # 创建新卡片
-            new_card = {
-                'question': format_answer(f"补充问题：{data['question']}"),
-                'answer': format_answer(new_content.strip()),
-                'importance': flashcards[card_index]['importance'],
-                'probability': flashcards[card_index]['probability'],
-                'learning_state': {
-                    'review_count': 0,
-                    'last_review': None,
-                    'next_review': None,
-                    'ease_factor': 2.5,
-                    'interval': 0
-                }
-            }
-            flashcards.append(new_card)
-        
-        # 保存更新后的闪卡
-        with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(flashcards, f, ensure_ascii=False, indent=2)
-        
-        return jsonify({
-            'success': True,
-            'flashcards': flashcards
-        })
+            connection = db.connect()
+            try:
+                with connection.cursor() as cursor:
+                    # 获取原卡片的一些属性作为参考
+                    sql = "SELECT source_file, importance, probability FROM flashcards WHERE id = %s"
+                    cursor.execute(sql, (card_id,))
+                    ref_card = cursor.fetchone()
+                    
+                    if not ref_card:
+                        raise ValueError("Reference card not found")
+                    
+                    # 创建新卡片
+                    sql = """
+                        INSERT INTO flashcards 
+                        (source_file, question, answer, importance, probability)
+                        VALUES (%s, %s, %s, %s, %s)
+                    """
+                    cursor.execute(sql, (
+                        ref_card['source_file'],
+                        question,
+                        new_content,
+                        ref_card['importance'],
+                        ref_card['probability']
+                    ))
+                    connection.commit()
+                    
+                    # 获取新创建的卡片
+                    new_card_id = cursor.lastrowid
+                    cursor.execute("SELECT * FROM flashcards WHERE id = %s", (new_card_id,))
+                    new_card = cursor.fetchone()
+                    
+                    return jsonify({
+                        'success': True,
+                        'message': '已创建新卡片',
+                        'card': new_card
+                    })
+            finally:
+                connection.close()
+            
     except Exception as e:
         logger.error(f"Error in update_card: {str(e)}")
         return jsonify({

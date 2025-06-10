@@ -51,6 +51,37 @@
             border: 2px dashed #ccc;
             border-radius: 8px;
         }
+        .file-list {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+        }
+        .file-list h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            margin: 5px 0;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .file-item:hover {
+            background-color: #f0f0f0;
+        }
+        .file-name {
+            flex-grow: 1;
+            margin-right: 10px;
+        }
+        .file-actions {
+            display: flex;
+            gap: 10px;
+        }
         .progress-section {
             margin: 20px 0;
             padding: 10px;
@@ -124,9 +155,46 @@
             padding: 10px 20px;
             border-radius: 4px;
             cursor: pointer;
+            font-size: 14px;
         }
         button:hover {
             background-color: #0056b3;
+        }
+        button.secondary {
+            background-color: #6c757d;
+        }
+        button.secondary:hover {
+            background-color: #5a6268;
+        }
+        .btn-select {
+            background-color: #28a745;
+        }
+        .btn-select:hover {
+            background-color: #218838;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            color: #495057;
+            font-weight: 500;
+        }
+        .tab.active {
+            color: #007bff;
+            border-bottom: 2px solid #007bff;
+            margin-bottom: -2px;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
         }
         /* 添加数学公式样式 */
         .MathJax {
@@ -143,12 +211,33 @@
     <div class="container">
         <h1>Markdown to Flashcards</h1>
         
-        <div class="upload-section">
-            <form id="uploadForm">
-                <input type="file" id="fileInput" accept=".md,.markdown" style="display: none;">
-                <button type="button" onclick="document.getElementById('fileInput').click()">选择Markdown文件</button>
-                <button type="submit">上传并生成闪卡</button>
-            </form>
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('upload')">上传新文件</button>
+            <button class="tab" onclick="showTab('select')">从文件库选择</button>
+        </div>
+        
+        <div id="uploadTab" class="tab-content active">
+            <div class="upload-section">
+                <form id="uploadForm">
+                    <input type="file" id="fileInput" accept=".md,.markdown" style="display: none;">
+                    <button type="button" onclick="document.getElementById('fileInput').click()">选择Markdown文件</button>
+                    <button type="submit">上传并生成闪卡</button>
+                </form>
+            </div>
+        </div>
+        
+        <div id="selectTab" class="tab-content">
+            <div class="file-list">
+                <h3>可用文件</h3>
+                {% for file in markdown_files %}
+                <div class="file-item">
+                    <span class="file-name">{{ file }}</span>
+                    <div class="file-actions">
+                        <button class="btn-select" onclick="selectFile('{{ file }}')">选择此文件</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
         </div>
 
         <div class="progress-section">
@@ -164,26 +253,94 @@
     </div>
 
     <script>
-        let timerInterval;
         let startTime;
+        let timerInterval;
+        
+        function showTab(tabName) {
+            // 移除所有标签页和内容的active类
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            
+            // 添加active类到选中的标签页和内容
+            document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+            document.getElementById(`${tabName}Tab`).classList.add('active');
+        }
+
+        function updateTimer() {
+            const now = new Date();
+            const diff = Math.floor((now - startTime) / 1000);
+            const minutes = Math.floor(diff / 60).toString().padStart(2, '0');
+            const seconds = (diff % 60).toString().padStart(2, '0');
+            document.querySelector('.timer').textContent = `${minutes}:${seconds}`;
+        }
 
         function startTimer() {
-            startTime = Date.now();
-            const timerElement = document.querySelector('.timer');
-            
-            timerInterval = setInterval(() => {
-                const elapsedTime = Date.now() - startTime;
-                const seconds = Math.floor(elapsedTime / 1000);
-                const minutes = Math.floor(seconds / 60);
-                const remainingSeconds = seconds % 60;
-                
-                timerElement.textContent = `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-            }, 1000);
+            startTime = new Date();
+            timerInterval = setInterval(updateTimer, 1000);
         }
 
         function stopTimer() {
             if (timerInterval) {
                 clearInterval(timerInterval);
+                timerInterval = null;
+            }
+        }
+
+        function showError(message) {
+            const errorElement = document.querySelector('.error-message');
+            errorElement.textContent = message;
+            errorElement.style.display = 'block';
+            setTimeout(() => {
+                errorElement.style.display = 'none';
+            }, 5000);
+        }
+
+        function showSuccess(message) {
+            const successElement = document.querySelector('.success-message');
+            successElement.textContent = message;
+            successElement.style.display = 'block';
+            setTimeout(() => {
+                successElement.style.display = 'none';
+            }, 5000);
+        }
+
+        async function selectFile(filename) {
+            try {
+                document.querySelector('.progress-section').style.display = 'block';
+                startTimer();
+
+                const response = await fetch('/api/select_file', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ filename: filename })
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n').filter(line => line.trim());
+                    
+                    for (const line of lines) {
+                        try {
+                            const data = JSON.parse(line);
+                            handleStreamMessage(data);
+                        } catch (e) {
+                            console.error('Error parsing stream data:', e);
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error selecting file:', error);
+                showError('选择文件失败: ' + error.message);
+                document.querySelector('.progress-section').style.display = 'none';
+                stopTimer();
             }
         }
 
@@ -191,51 +348,48 @@
             e.preventDefault();
             
             const fileInput = document.getElementById('fileInput');
-            if (!fileInput.files.length) {
-                showError('请选择一个文件');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showError('请选择文件');
                 return;
             }
-
-            const file = fileInput.files[0];
+            
             const formData = new FormData();
             formData.append('file', file);
-
-            // 重置显示状态
-            document.querySelector('.progress-section').style.display = 'block';
-            document.querySelector('.status-message').textContent = '';
-            document.querySelector('.error-message').style.display = 'none';
-            document.getElementById('flashcardsContainer').innerHTML = '';
             
-            // 启动计时器
+            document.querySelector('.progress-section').style.display = 'block';
             startTimer();
-
+            
             try {
                 const response = await fetch('/upload', {
                     method: 'POST',
                     body: formData
                 });
-
+                
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
-
+                
                 while (true) {
-                    const {value, done} = await reader.read();
+                    const { value, done } = await reader.read();
                     if (done) break;
-
-                    const text = decoder.decode(value);
-                    const messages = text.split('\n').filter(msg => msg.trim());
-
-                    for (const msg of messages) {
+                    
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n').filter(line => line.trim());
+                    
+                    for (const line of lines) {
                         try {
-                            const data = JSON.parse(msg);
+                            const data = JSON.parse(line);
                             handleStreamMessage(data);
                         } catch (e) {
-                            console.error('Error parsing message:', msg);
+                            console.error('Error parsing stream data:', e);
                         }
                     }
                 }
             } catch (error) {
+                console.error('Error uploading file:', error);
                 showError('上传失败: ' + error.message);
+                document.querySelector('.progress-section').style.display = 'none';
                 stopTimer();
             }
         });
@@ -289,12 +443,6 @@
             if (window.MathJax) {
                 MathJax.Hub.Queue(["Typeset", MathJax.Hub]);
             }
-        }
-
-        function showError(message) {
-            const errorElement = document.querySelector('.error-message');
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
         }
     </script>
 </body>

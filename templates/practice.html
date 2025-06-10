@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>闪卡练习</title>
+    <title>复习闪卡</title>
     <!-- 使用最新版本的marked -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     
@@ -127,15 +127,17 @@
             margin-bottom: 20px;
             cursor: pointer;
             transition: transform 0.3s ease;
+            border: 1px solid #ddd;
         }
         .card-content {
             margin-bottom: 20px;
         }
         .answer {
             display: none;
-            margin-top: 20px;
-            padding-top: 20px;
-            border-top: 1px solid #eee;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
         }
         .controls {
             display: none;
@@ -301,6 +303,13 @@
         .markdown > *:not(:last-child) {
             margin-bottom: 1em;
         }
+        .difficulty-btn {
+            display: none;
+        }
+        .progress {
+            margin: 20px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -314,39 +323,35 @@
         </div>
         
         <div class="card-container">
-            <div class="card">
-                <div class="importance-probability">
-                    <span>重要性: <span id="importance">0</span>/5</span>
-                    <span>考试概率: <span id="probability">0</span>/5</span>
+            <div class="progress">
+                <h3>复习进度</h3>
+                <p>当前第 <span id="currentCard">1</span> 张，共 <span id="totalCards">{{ flashcards|length }}</span> 张</p>
+                {% if message %}
+                    <p>{{ message }}</p>
+                {% endif %}
+            </div>
+
+            {% for card in flashcards %}
+            <div class="card" style="display: {% if loop.index0 == 0 %}block{% else %}none{% endif %};" data-index="{{ loop.index0 }}" data-id="{{ card.id }}">
+                <div class="question">{{ card.question|safe }}</div>
+                <div class="answer">{{ card.answer|safe }}</div>
+                <div class="buttons">
+                    <button class="button show-answer" onclick="showAnswer(this)">显示答案</button>
+                    <button class="button difficulty-btn easy" onclick="recordDifficulty('easy', this)">简单</button>
+                    <button class="button difficulty-btn medium" onclick="recordDifficulty('medium', this)">一般</button>
+                    <button class="button difficulty-btn hard" onclick="recordDifficulty('hard', this)">困难</button>
                 </div>
-                <div class="card-content">
-                    <div id="question" class="markdown"></div>
-                    <div id="answer" class="answer markdown"></div>
-                </div>
-                
-                <!-- 添加提问部分 -->
-                <div class="qa-section">
+                <div class="qa-section" style="display: none;">
                     <textarea class="qa-input" placeholder="输入你的问题..." rows="3"></textarea>
-                    <button class="btn-ask" onclick="askQuestion()">向DeepSeek提问</button>
-                    <div class="qa-answer markdown"></div>
-                    <div class="qa-actions">
-                        <div class="btn-group">
-                            <button class="btn-append" onclick="updateCard('append')">补充到当前卡片</button>
-                            <button class="btn-new" onclick="updateCard('new')">创建新卡片</button>
-                        </div>
+                    <button class="button btn-ask" onclick="askDeepSeek(this)">向DeepSeek提问</button>
+                    <div class="qa-answer"></div>
+                    <div class="qa-actions" style="display: none;">
+                        <button class="button btn-append" onclick="updateCard('append', this)">补充到当前卡片</button>
+                        <button class="button btn-new" onclick="updateCard('new', this)">创建新卡片</button>
                     </div>
                 </div>
             </div>
-            
-            <div class="button-group">
-                <button class="show-answer" onclick="showAnswer()">显示答案</button>
-                <div class="controls">
-                    <button class="again" onclick="gradeCard(1)">重来 (<1min)</button>
-                    <button class="hard" onclick="gradeCard(2)">困难 (3d)</button>
-                    <button class="good" onclick="gradeCard(3)">良好 (1w)</button>
-                    <button class="easy" onclick="gradeCard(4)">简单 (2w)</button>
-                </div>
-            </div>
+            {% endfor %}
         </div>
     </div>
 
@@ -363,10 +368,18 @@
         const EASY_INTERVAL = 14; // 2周
 
         function updateProgress() {
-            const total = flashcards.length;
-            const current = currentCardIndex + 1;
-            document.getElementById('progress-text').textContent = `${current} / ${total}`;
-            document.querySelector('.progress').style.width = `${(current / total) * 100}%`;
+            const cards = document.querySelectorAll('.card');
+            const total = cards.length;
+            const current = parseInt(document.getElementById('currentCard').textContent);
+            
+            // 更新进度文本
+            document.getElementById('totalCards').textContent = total;
+            
+            // 更新进度条（如果存在）
+            const progressBar = document.querySelector('.progress-bar .progress');
+            if (progressBar) {
+                progressBar.style.width = `${(current / total) * 100}%`;
+            }
         }
 
         // 等待MathJax加载完成
@@ -430,20 +443,30 @@
                 const answerHtml = renderMarkdown(answer);
                 
                 // 更新DOM
-                const questionElement = document.getElementById('question');
-                const answerElement = document.getElementById('answer');
+                const questionElement = document.querySelector('.card .question');
+                const answerElement = document.querySelector('.card .answer');
+                
+                if (!questionElement || !answerElement) {
+                    throw new Error('找不到问题或答案元素');
+                }
                 
                 questionElement.innerHTML = questionHtml;
                 answerElement.innerHTML = answerHtml;
-                document.getElementById('importance').textContent = card.importance;
-                document.getElementById('probability').textContent = card.probability;
                 
                 // 重置显示状态
                 answerElement.style.display = 'none';
-                document.querySelector('.controls').style.display = 'none';
-                document.querySelector('.show-answer').style.display = 'block';
-                document.querySelector('.qa-section').style.display = 'none';
-                showingAnswer = false;
+                
+                // 获取当前卡片的按钮
+                const showAnswerBtn = questionElement.closest('.card').querySelector('.show-answer');
+                const difficultyBtns = questionElement.closest('.card').querySelectorAll('.difficulty-btn');
+                
+                if (showAnswerBtn) {
+                    showAnswerBtn.style.display = 'block';
+                }
+                
+                if (difficultyBtns) {
+                    difficultyBtns.forEach(btn => btn.style.display = 'none');
+                }
 
                 updateProgress();
                 
@@ -459,16 +482,31 @@
             }
         }
 
-        async function showAnswer() {
-            const answerElement = document.getElementById('answer');
-            answerElement.style.display = 'block';
-            document.querySelector('.controls').style.display = 'block';
-            document.querySelector('.show-answer').style.display = 'none';
-            document.querySelector('.qa-section').style.display = 'block';  // 显示提问部分
-            showingAnswer = true;
+        async function showAnswer(btn) {
+            if (!btn) return;
             
-            // 重新渲染答案中的数学公式
-            await renderMathJax(answerElement);
+            const card = btn.closest('.card');
+            if (!card) return;
+            
+            const answerElement = card.querySelector('.answer');
+            const difficultyBtns = card.querySelectorAll('.difficulty-btn');
+            const qaSection = card.querySelector('.qa-section');
+            
+            if (answerElement) {
+                answerElement.style.display = 'block';
+                // 重新渲染答案中的数学公式
+                await renderMathJax(answerElement);
+            }
+            
+            if (difficultyBtns) {
+                difficultyBtns.forEach(btn => btn.style.display = 'inline-block');
+            }
+
+            if (qaSection) {
+                qaSection.style.display = 'block';
+            }
+            
+            btn.style.display = 'none';
         }
 
         async function gradeCard(grade) {
@@ -541,21 +579,20 @@
             showCard();
         }
 
-        async function askQuestion() {
-            console.log('askQuestion function called');
-            const question = document.querySelector('.qa-input').value.trim();
+        async function askDeepSeek(btn) {
+            const card = btn.closest('.card');
+            const question = card.querySelector('.qa-input').value.trim();
             if (!question) {
                 showError('请输入问题');
                 return;
             }
 
-            console.log('Question:', question);
-            const card = flashcards[currentCardIndex];
-            const context = `问题：${card.question}\n\n答案：${card.answer}`;
-            console.log('Context:', context);
+            const context = {
+                question: card.querySelector('.question').innerHTML,
+                answer: card.querySelector('.answer').innerHTML
+            };
 
             try {
-                console.log('Sending request to /api/ask_deepseek');
                 const response = await fetch('/api/ask_deepseek', {
                     method: 'POST',
                     headers: {
@@ -563,36 +600,34 @@
                     },
                     body: JSON.stringify({
                         question: question,
-                        context: context
+                        context: `问题：${context.question}\n\n答案：${context.answer}`
                     })
                 });
-                console.log('Response received:', response);
 
                 const data = await response.json();
-                console.log('Response data:', data);
-                
                 if (!data.success) {
                     throw new Error(data.error);
                 }
 
-                const answerElement = document.querySelector('.qa-answer');
-                answerElement.innerHTML = renderMarkdown(data.answer);
-                answerElement.style.display = 'block';
-                document.querySelector('.qa-actions').style.display = 'block';
-
-                // 渲染数学公式
-                console.log('Rendering MathJax for DeepSeek answer');
-                await renderMathJax(answerElement);
+                const qaAnswer = card.querySelector('.qa-answer');
+                const qaActions = card.querySelector('.qa-actions');
+                
+                qaAnswer.innerHTML = renderMarkdown(data.answer);
+                await renderMathJax(qaAnswer);
+                
+                qaAnswer.style.display = 'block';
+                qaActions.style.display = 'block';
             } catch (error) {
-                console.error('Error in askQuestion:', error);
+                console.error('Error in askDeepSeek:', error);
                 showError('提问失败: ' + error.message);
             }
         }
 
-        async function updateCard(type) {
-            const answerElement = document.querySelector('.qa-answer');
-            const answer = answerElement.innerHTML;  // Get the HTML content with LaTeX formulas
-            const question = document.querySelector('.qa-input').value.trim();
+        async function updateCard(type, btn) {
+            const card = btn.closest('.card');
+            const cardId = card.dataset.id;
+            const question = card.querySelector('.qa-input').value.trim();
+            const answer = card.querySelector('.qa-answer').innerHTML;
 
             try {
                 const response = await fetch('/api/update_card', {
@@ -601,8 +636,7 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        filename: filename,
-                        card_index: currentCardIndex,
+                        card_id: cardId,
                         update_type: type,
                         content: answer,
                         question: question
@@ -611,35 +645,64 @@
 
                 const data = await response.json();
                 if (!data.success) {
-                    throw new Error(data.error);
+                    throw new Error(data.error || '更新失败');
                 }
 
-                // 更新闪卡数据
-                flashcards = data.flashcards;
-                
                 // 清理提问界面
-                document.querySelector('.qa-input').value = '';
-                answerElement.innerHTML = '';
-                answerElement.style.display = 'none';
-                document.querySelector('.qa-actions').style.display = 'none';
+                card.querySelector('.qa-input').value = '';
+                card.querySelector('.qa-answer').innerHTML = '';
+                card.querySelector('.qa-answer').style.display = 'none';
+                card.querySelector('.qa-actions').style.display = 'none';
 
-                // 如果是追加到当前卡片，重新渲染当前卡片
                 if (type === 'append') {
-                    const card = flashcards[currentCardIndex];
-                    const answerElement = document.getElementById('answer');
-                    answerElement.innerHTML = renderMarkdown(card.answer);
+                    // 更新当前卡片的答案
+                    const answerElement = card.querySelector('.answer');
+                    answerElement.innerHTML = data.card.answer;
                     await renderMathJax(answerElement);
+                    showSuccess('已补充到当前卡片');
                 } else {
-                    // 如果是新卡片，显示成功消息后重新渲染当前卡片
-                    await showCard();
+                    // 创建新卡片后显示成功消息
+                    showSuccess('已创建新卡片');
+                    
+                    // 可选：将新卡片添加到当前卡片列表
+                    const newCard = createCardElement(data.card);
+                    card.parentNode.appendChild(newCard);
                 }
-                
-                // 显示成功消息
-                showSuccess(type === 'append' ? '已补充到当前卡片' : '已创建新卡片');
             } catch (error) {
                 console.error('Error in updateCard:', error);
                 showError('更新失败: ' + error.message);
             }
+        }
+
+        // 创建新卡片元素的辅助函数
+        function createCardElement(cardData) {
+            const div = document.createElement('div');
+            div.className = 'card';
+            div.style.display = 'none';  // 新卡片默认隐藏
+            div.dataset.id = cardData.id;
+            div.dataset.index = document.querySelectorAll('.card').length;
+
+            div.innerHTML = `
+                <div class="question">${cardData.question}</div>
+                <div class="answer" style="display: none;">${cardData.answer}</div>
+                <div class="buttons">
+                    <button class="button show-answer" onclick="showAnswer(this)">显示答案</button>
+                    <button class="button difficulty-btn easy" onclick="recordDifficulty('easy', this)">简单</button>
+                    <button class="button difficulty-btn medium" onclick="recordDifficulty('medium', this)">一般</button>
+                    <button class="button difficulty-btn hard" onclick="recordDifficulty('hard', this)">困难</button>
+                </div>
+                <div class="qa-section" style="display: none;">
+                    <textarea class="qa-input" placeholder="输入你的问题..." rows="3"></textarea>
+                    <button class="button btn-ask" onclick="askDeepSeek(this)">向DeepSeek提问</button>
+                    <div class="qa-answer"></div>
+                    <div class="qa-actions" style="display: none;">
+                        <button class="button btn-append" onclick="updateCard('append', this)">补充到当前卡片</button>
+                        <button class="button btn-new" onclick="updateCard('new', this)">创建新卡片</button>
+                    </div>
+                </div>
+            `;
+
+            return div;
         }
 
         function showError(message) {
@@ -703,14 +766,113 @@
                 return;
             }
 
-            console.log('Flashcards:', flashcards);
-            if (!flashcards || !Array.isArray(flashcards) || flashcards.length === 0) {
-                showError('没有找到闪卡数据或数据格式不正确');
+            // 检查是否有卡片数据
+            const cards = document.querySelectorAll('.card');
+            if (!cards || cards.length === 0) {
+                showError('没有找到闪卡数据');
                 return;
             }
             
-            await showCard();
+            // 初始化第一张卡片
+            const firstCard = cards[0];
+            if (firstCard) {
+                const questionElement = firstCard.querySelector('.question');
+                const answerElement = firstCard.querySelector('.answer');
+                
+                if (questionElement && answerElement) {
+                    // 渲染第一张卡片的数学公式
+                    await renderMathJax(questionElement);
+                    await renderMathJax(answerElement);
+                }
+            }
+            
+            // 更新进度
+            updateProgress();
         });
+
+        async function recordDifficulty(difficulty, btn) {
+            const card = btn.closest('.card');
+            const cardId = card.dataset.id;
+            const cardIndex = parseInt(card.dataset.index);
+            
+            // 计算下次复习时间和间隔
+            const now = new Date();
+            let interval = 0;
+            let easeFactor = parseFloat(card.dataset.easeFactor || 2.5);
+            
+            switch(difficulty) {
+                case 'hard':
+                    interval = 1; // 1天后复习
+                    easeFactor = Math.max(1.3, easeFactor - 0.2);
+                    break;
+                case 'medium':
+                    interval = 3; // 3天后复习
+                    break;
+                case 'easy':
+                    interval = 7; // 7天后复习
+                    easeFactor = easeFactor + 0.1;
+                    break;
+            }
+
+            const nextReview = new Date(now);
+            nextReview.setDate(nextReview.getDate() + interval);
+
+            // 格式化日期为MySQL datetime格式
+            const formatDate = (date) => {
+                return date.toISOString().slice(0, 19).replace('T', ' ');
+            };
+
+            // 发送复习记录到服务器
+            fetch('/api/update_card_state', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    card_id: cardId,
+                    review_data: {
+                        review_date: formatDate(now),
+                        next_review: formatDate(nextReview),
+                        difficulty: difficulty,
+                        ease_factor: easeFactor,
+                        interval: interval
+                    }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 显示下一张卡片
+                    showNextCard(cardIndex);
+                } else {
+                    alert('保存复习记录失败：' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                alert('保存复习记录失败');
+            });
+        }
+
+        function showNextCard(currentIndex) {
+            const cards = document.querySelectorAll('.card');
+            const totalCards = cards.length;
+            const nextIndex = currentIndex + 1;
+
+            // 更新进度
+            document.getElementById('currentCard').textContent = nextIndex + 1;
+
+            if (nextIndex < totalCards) {
+                // 隐藏当前卡片
+                cards[currentIndex].style.display = 'none';
+                // 显示下一张卡片
+                cards[nextIndex].style.display = 'block';
+            } else {
+                // 所有卡片都复习完了
+                alert('恭喜！所有卡片都已复习完成。');
+                window.location.href = '/';  // 返回首页
+            }
+        }
     </script>
 </body>
 </html> 
