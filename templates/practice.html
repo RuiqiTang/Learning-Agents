@@ -540,34 +540,6 @@
             }
             
             const cardId = card.dataset.id;
-            const now = new Date();
-            
-            // 计算下次复习时间（示例：简单的间隔）
-            let interval;
-            let easeFactor = 2.5;  // 默认难度系数
-            
-            switch(difficulty) {
-                case 'again':
-                    interval = 1;  // 1天后
-                    easeFactor = 2.2;
-                    break;
-                case 'hard':
-                    interval = 3;  // 3天后
-                    easeFactor = 2.3;
-                    break;
-                case 'good':
-                    interval = 7;  // 7天后
-                    easeFactor = 2.5;
-                    break;
-                case 'easy':
-                    interval = 14;  // 14天后
-                    easeFactor = 2.7;
-                    break;
-                default:
-                    interval = 7;
-            }
-            
-            const nextReview = new Date(now.getTime() + interval * 24 * 60 * 60 * 1000);
             
             try {
                 const response = await fetch('/api/update_card_state', {
@@ -578,10 +550,9 @@
                     body: JSON.stringify({
                         card_id: cardId,
                         review_data: {
-                            next_review: formatDate(nextReview),
                             difficulty: difficulty,
-                            ease_factor: easeFactor,
-                            interval: interval
+                            interval: parseInt(card.dataset.interval || '0'),
+                            ease_factor: parseFloat(card.dataset.easeFactor || '2.5')
                         }
                     })
                 });

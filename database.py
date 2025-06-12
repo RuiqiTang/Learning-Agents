@@ -406,6 +406,44 @@ class Database:
             if connection:
                 connection.close()
 
+    def cleanup_flashcards(self):
+        """清理重复的闪卡，只保留最新版本"""
+        connection = None
+        try:
+            connection = self.connect()
+            with connection.cursor() as cursor:
+                # 使用CTE找出每个(source_file, question, answer)组合的最新记录
+                sql = """
+                    WITH LatestCards AS (
+                        SELECT id, source_file, question, answer,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY source_file, question, answer
+                                   ORDER BY updated_at DESC
+                               ) as rn
+                        FROM flashcards
+                    ),
+                    DuplicateCards AS (
+                        SELECT id
+                        FROM LatestCards
+                        WHERE rn > 1
+                    )
+                    DELETE FROM flashcards
+                    WHERE id IN (SELECT id FROM DuplicateCards)
+                """
+                cursor.execute(sql)
+                deleted_count = cursor.rowcount
+                connection.commit()
+                logger.info(f"Cleaned up {deleted_count} duplicate flashcards")
+                return deleted_count
+        except Exception as e:
+            logger.error(f"Error cleaning up flashcards: {str(e)}")
+            if connection:
+                connection.rollback()
+            raise
+        finally:
+            if connection:
+                connection.close()
+
     def save_review_record(self, flashcard_id, review_data):
         """Save a review record and increment heatmap count"""
         connection = None
@@ -439,6 +477,9 @@ class Database:
                     updated_at = CURRENT_TIMESTAMP
                 """
                 cursor.execute(sql, (review_date,))
+                
+                # 清理重复的闪卡
+                self.cleanup_flashcards()
                 
                 connection.commit()
                 logger.info(f"Saved review record and incremented heatmap count for date {review_date}")
@@ -540,26 +581,29 @@ class Database:
                 if source_file:
                     source_file_condition = "AND source_file LIKE %s"
                     params.append(f"{source_file}%")
-                    params.append(f"{source_file}%")  # 需要两次，因为SQL中使用了两次条件
+                
+                # 将当前时间添加到参数列表
+                params.append(now)
                 
                 # 构建SQL查询
                 sql = f"""
                     WITH LatestCards AS (
-                        SELECT question, MAX(updated_at) as latest_update
-                        FROM flashcards 
+                        SELECT f.id, f.source_file, f.question, f.answer, f.updated_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY f.source_file, f.question
+                                   ORDER BY f.updated_at DESC
+                               ) as rn
+                        FROM flashcards f
                         WHERE 1=1
                         {source_file_condition}
-                        GROUP BY question
                     )
-                    SELECT f.*, 
-                           r.next_review,
-                           r.ease_factor,
-                           r.review_interval,
-                           r.review_date as last_review
-                    FROM flashcards f
-                    INNER JOIN LatestCards lc 
-                        ON f.question = lc.question 
-                        AND f.updated_at = lc.latest_update
+                    SELECT 
+                        f.*,
+                        r.next_review,
+                        r.ease_factor,
+                        r.review_interval,
+                        r.review_date as last_review
+                    FROM LatestCards f
                     LEFT JOIN (
                         SELECT r1.*
                         FROM review_records r1
@@ -570,18 +614,24 @@ class Database:
                         ) r2 ON r1.flashcard_id = r2.flashcard_id 
                         AND r1.review_date = r2.max_review_date
                     ) r ON f.id = r.flashcard_id
-                    WHERE 1=1
-                        {source_file_condition}
+                    WHERE f.rn = 1
+                    AND (
+                        r.next_review IS NULL  -- 从未复习过的卡片
+                        OR r.next_review <= %s  -- 已经到期的卡片
+                    )
                     ORDER BY 
                         CASE 
-                            WHEN r.next_review IS NULL THEN f.created_at
-                            ELSE r.next_review
+                            WHEN r.next_review IS NULL THEN f.updated_at  -- 新卡片按更新时间排序
+                            ELSE r.next_review  -- 复习卡片按到期时间排序
                         END ASC
                 """
                 
                 # 执行查询
                 cursor.execute(sql, params)
-                return cursor.fetchall()
+                cards = cursor.fetchall()
+                
+                logger.info(f"Found {len(cards)} cards due for review from source {source_file}")
+                return cards
                 
         except Exception as e:
             logger.error(f"Error getting due flashcards: {str(e)}")

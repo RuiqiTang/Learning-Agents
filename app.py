@@ -10,6 +10,7 @@ import logging
 import re
 from database import Database
 from config import UPLOAD_FOLDER, FLASHCARDS_FOLDER
+from algo.supermemo import get_next_review_date
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG)
@@ -270,12 +271,28 @@ def practice(filename):
 def update_card_state():
     try:
         data = request.json
-        card_id = data['card_id']  # 从前端传入卡片ID
+        card_id = data['card_id']
         review_data = data['review_data']
+        
+        # 使用SuperMemo算法计算下次复习时间
+        current_interval = review_data.get('interval', 0)  # 如果是新卡片，interval为0
+        ease_factor = review_data.get('ease_factor', 2.5)  # 默认难度系数为2.5
+        difficulty = review_data.get('difficulty', 'good')  # 默认难度为good
+        
+        next_review_date, new_interval, new_ease_factor = get_next_review_date(
+            difficulty=difficulty,
+            current_interval=current_interval,
+            ease_factor=ease_factor
+        )
         
         # 使用当前时间作为复习时间
         current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        review_data['review_date'] = current_time
+        review_data.update({
+            'review_date': current_time,
+            'next_review': next_review_date.strftime('%Y-%m-%d %H:%M:%S'),
+            'interval': new_interval,
+            'ease_factor': new_ease_factor
+        })
         
         # 保存复习记录到数据库（同时会更新热力图）
         db.save_review_record(card_id, review_data)
