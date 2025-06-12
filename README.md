@@ -1,6 +1,10 @@
 # Learning-Agents
 
-一个智能的闪卡学习系统，结合了间隔重复算法和 AI 辅助学习功能。
+一个智能的闪卡学习系统，结合了间隔重复算法和 AI 辅助学习功能
+
+<img src="pic/main.jpg" alt="主界面">
+
+<img src="pic/flashcards-2.jpg" alt="闪卡界面">
 
 ## 功能特点
 
