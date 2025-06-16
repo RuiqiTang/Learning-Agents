@@ -35,15 +35,15 @@ except Exception as e:
 # Load environment variables
 load_dotenv()
 
-# Configure OpenAI client for DeepSeek
-api_key = os.getenv('DEEPSEEK_API_KEY')
+# Configure OpenAI client for Qwen
+api_key = os.getenv("DASHSCOPE_API_KEY")
 if not api_key:
-    logger.error("DEEPSEEK_API_KEY not found in environment variables")
-    raise ValueError("DEEPSEEK_API_KEY not found in environment variables")
+    logger.error("DASHSCOPE_API_KEY not found in environment variables")
+    raise ValueError("DASHSCOPE_API_KEY not found in environment variables")
 
 client = OpenAI(
     api_key=api_key,
-    base_url="https://api.deepseek.com/v1"
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
 )
 
 # Configure app
@@ -119,71 +119,175 @@ def generate_flashcards_stream(markdown_content, original_filename):
     try:
         yield json.dumps({
             'type': 'status',
-            'data': '正在获取闪卡...'
+            'data': '正在获取闪卡...',
+            'progress': 0
         })
 
         # 获取基础文件名（去除扩展名和时间戳）
         base_filename = os.path.splitext(original_filename)[0]
-        # 如果文件名包含时间戳（格式如 _YYYYMMDD_HHMMSS），去除它
         base_filename = re.sub(r'_\d{8}_\d{6}$', '', base_filename)
 
-        # 直接从数据库获取闪卡，使用基础文件名进行模糊匹配
+        # 从数据库获取闪卡
         flashcards = db.get_flashcards_by_source(base_filename)
+        logger.debug(f"Found {len(flashcards) if flashcards else 0} existing flashcards for {base_filename}")
         
         if not flashcards:
             # 如果数据库中没有找到闪卡，则生成新的闪卡
             yield json.dumps({
                 'type': 'status',
-                'data': '未找到现有闪卡，正在生成新的闪卡...'
+                'data': '未找到现有闪卡，正在通过AI生成新的闪卡...',
+                'progress': 20
             })
             
-            # 这里保留原有的生成闪卡的代码
-            # ... 原有的闪卡生成代码 ...
+            # 构建提示词
+            prompt = f"""
+            请将以下Markdown内容转换为高质量的闪卡。每个闪卡应包含问题和答案。
+            请确保：
+            1. 保留所有数学公式和LaTeX格式
+            2. 问题简洁明确
+            3. 答案详细完整
+            4. 每个知识点独立成卡
+            5. 保持专业性和准确性
+
+            Markdown内容：
+            {markdown_content}
+
+            请以JSON格式输出，格式如下：
+            [
+                {{
+                    "question": "问题1",
+                    "answer": "答案1",
+                    "importance": 3,
+                    "probability": 3
+                }},
+                ...
+            ]
+            """
             
-        else:
-            # 获取所有相关的源文件
-            source_files = set(card['source_file'] for card in flashcards)
-            
-            # 处理从数据库获取的闪卡
-            for card in flashcards:
-                # 处理反斜杠，恢复LaTeX公式
-                if '\\\\' in card['question']:
-                    card['question'] = card['question'].replace('\\\\', '\\')
-                if '\\\\' in card['answer']:
-                    card['answer'] = card['answer'].replace('\\\\', '\\')
-                # 处理换行符
-                if '\\n' in card['question']:
-                    card['question'] = card['question'].replace('\\n', '\n')
-                if '\\n' in card['answer']:
-                    card['answer'] = card['answer'].replace('\\n', '\n')
+            try:
+                response = client.chat.completions.create(
+                    model="qwen-plus",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "你是一个专业的教育专家，精通将复杂概念转换为高质量的FlashCards。"
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt
+                        }
+                    ],
+                    temperature=0.3,
+                    max_tokens=4000,
+                    stream=True
+                )
                 
-                # 转换datetime对象为字符串
-                if 'created_at' in card:
-                    card['created_at'] = card['created_at'].strftime('%Y-%m-%d %H:%M:%S')
-                if 'updated_at' in card:
-                    card['updated_at'] = card['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
-                if 'learning_state' in card:
-                    if card['learning_state'].get('last_review'):
-                        card['learning_state']['last_review'] = card['learning_state']['last_review'].strftime('%Y-%m-%d %H:%M:%S')
-                    if card['learning_state'].get('next_review'):
-                        card['learning_state']['next_review'] = card['learning_state']['next_review'].strftime('%Y-%m-%d %H:%M:%S')
-            
-            # 构建详细的消息
-            message = f'成功加载 {len(flashcards)} 张闪卡'
-            if len(source_files) > 1:
-                message += f'（来自 {len(source_files)} 个相关文件：{", ".join(source_files)}）'
-            
+                # 收集AI生成的响应
+                collected_response = []
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        collected_response.append(chunk.choices[0].delta.content)
+                        # 发送生成进度更新
+                        yield json.dumps({
+                            'type': 'status',
+                            'data': 'AI正在生成闪卡...',
+                            'progress': 40
+                        })
+                
+                # 解析生成的JSON
+                response_text = ''.join(collected_response)
+                try:
+                    flashcards = json.loads(response_text)
+                except json.JSONDecodeError:
+                    # 如果JSON解析失败，尝试提取[]之间的内容
+                    match = re.search(r'\[(.*)\]', response_text, re.DOTALL)
+                    if match:
+                        flashcards = json.loads(f"[{match.group(1)}]")
+                    else:
+                        raise ValueError("无法解析AI生成的闪卡数据")
+                
+                # 保存新生成的闪卡
+                yield json.dumps({
+                    'type': 'status',
+                    'data': '正在保存新生成的闪卡...',
+                    'progress': 60
+                })
+                
+                filename = save_flashcards(original_filename, flashcards)
+                
+            except Exception as api_error:
+                logger.error(f"Qwen API error: {str(api_error)}")
+                yield json.dumps({
+                    'type': 'error',
+                    'data': f"生成闪卡失败: {str(api_error)}",
+                    'progress': 0
+                })
+                return
+        else:
             yield json.dumps({
-                'type': 'result',
-                'data': flashcards,
-                'filename': original_filename,
-                'message': message
-            }, cls=DateTimeEncoder)
+                'type': 'status',
+                'data': f'找到 {len(flashcards)} 张现有闪卡，正在处理...',
+                'progress': 20
+            })
+            
+        if not flashcards:
+            yield json.dumps({
+                'type': 'error',
+                'data': '未能生成或获取到任何闪卡',
+                'progress': 0
+            })
+            return
+            
+        # 处理闪卡数据
+        total_cards = len(flashcards)
+        for i, card in enumerate(flashcards):
+            # 处理反斜杠，恢复LaTeX公式
+            if '\\\\' in card['question']:
+                card['question'] = card['question'].replace('\\\\', '\\')
+            if '\\\\' in card['answer']:
+                card['answer'] = card['answer'].replace('\\\\', '\\')
+            # 处理换行符
+            if '\\n' in card['question']:
+                card['question'] = card['question'].replace('\\n', '\n')
+            if '\\n' in card['answer']:
+                card['answer'] = card['answer'].replace('\\n', '\n')
+            
+            # 转换datetime对象为字符串
+            if 'created_at' in card:
+                card['created_at'] = card['created_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if 'updated_at' in card:
+                card['updated_at'] = card['updated_at'].strftime('%Y-%m-%d %H:%M:%S')
+            if 'learning_state' in card:
+                if card['learning_state'].get('last_review'):
+                    card['learning_state']['last_review'] = card['learning_state']['last_review'].strftime('%Y-%m-%d %H:%M:%S')
+                if card['learning_state'].get('next_review'):
+                    card['learning_state']['next_review'] = card['learning_state']['next_review'].strftime('%Y-%m-%d %H:%M:%S')
+            
+            # 发送进度更新
+            progress = 80 + int((i + 1) / total_cards * 20)  # 80-100%的进度
+            yield json.dumps({
+                'type': 'status',
+                'data': f'正在处理第 {i + 1}/{total_cards} 张闪卡...',
+                'progress': progress
+            })
+        
+        # 构建详细的消息
+        message = f'成功加载 {len(flashcards)} 张闪卡'
+        
+        yield json.dumps({
+            'type': 'result',
+            'data': flashcards,
+            'filename': original_filename,
+            'message': message,
+            'progress': 100
+        }, cls=DateTimeEncoder)
 
     except Exception as e:
+        logger.error(f"Error in generate_flashcards: {str(e)}")
         yield json.dumps({
             'type': 'error',
-            'data': str(e)
+            'data': str(e),
+            'progress': 0
         })
 
 @app.route('/')
@@ -503,30 +607,11 @@ def format_answer(answer):
 def format_deepseek_prompt():
     """生成用于DeepSeek的数学公式格式化提示"""
     return """
-    在回答中，请严格遵循以下数学公式格式规范：
-    
-    1. 行内公式：
-       - 使用单个美元符号：$formula$
-       - 示例：$x$, $\\alpha$, $f(x)$
-       - 变量、参数等单个符号也要使用数学模式：$x$ 而不是 x
-    
-    2. 行间公式：
-       - 使用双美元符号：$$formula$$
-       - 示例：$$\\min\\left(1, \\frac{\\pi(x')}{\\pi(x)}\\right)$$
-       - 重要的多行公式或推导过程使用行间公式
-    
-    3. 数学符号规范：
-       - 希腊字母：$\\alpha$, $\\beta$, $\\pi$ 等
-       - 数学函数：$\\min$, $\\max$, $\\exp$, $\\log$ 等
-       - 关系运算符：$\\leq$, $\\geq$, $\\neq$, $\\approx$ 等
-       - 上下标使用花括号：$x_{t}$, $x^{2}$, $x_{i,j}$ 等
-       - 分式：$\\frac{numerator}{denominator}$
-    
-    4. 格式化规则：
-       - 所有数学符号和变量都必须在数学模式中
-       - 公式前后要有适当的空格
-       - 不要使用 Unicode 数学符号，使用 LaTeX 命令
-       - 避免使用 \\[...\\] 或 \\(...\\) 格式
+    请使用以下数学公式格式：
+    1. 行内公式：$formula$
+    2. 行间公式：$$formula$$
+    3. 数学符号：$\\alpha$, $\\beta$, $\\pi$ 等
+    4. 分式：$\\frac{numerator}{denominator}$
     """
 
 @app.route('/api/ask_deepseek', methods=['POST'])
@@ -544,25 +629,25 @@ def ask_deepseek():
                 'error': 'Missing question or context'
             }), 400
         
-        # 构建提示词
+        # 构建简化的提示词
         prompt = f"""
-                作为一个专业的数学和机器学习教育专家，请基于以下内容回答问题。
-                请确保回答准确、清晰，并保持与原文一致的专业水平，不要求生成json等格式化数据，而是自然语言。
-                
-                根据数学格式化规则：
-                {format_deepseek_prompt()}
-                
-                上下文内容：
-                {context}
-
-                问题：
-                {question}
-                """
+        作为数学和机器学习教育专家，请基于以下内容回答问题。
+        请确保回答准确、清晰，并保持与原文一致的专业水平。
         
-        logger.debug("Calling DeepSeek API")
+        数学公式格式：
+        {format_deepseek_prompt()}
+        
+        上下文：
+        {context}
+
+        问题：
+        {question}
+        """
+        
+        logger.debug("Calling Qwen API")
         try:
             response = client.chat.completions.create(
-                model="deepseek-chat",
+                model="qwen-plus",
                 messages=[
                     {
                         "role": "system",
@@ -573,27 +658,30 @@ def ask_deepseek():
                         "content": prompt
                     }
                 ],
-                temperature=0.3,  # 降低温度以获得更确定性的输出
-                max_tokens=4000,  # 增加最大token以处理长文本
-                stream=False
+                temperature=0.3,
+                max_tokens=2000,  # 减少token数量
+                stream=True  # 启用流式响应
             )
             
-            logger.debug("Received response from DeepSeek API")
-            answer = response.choices[0].message.content.strip()
+            # 处理流式响应
+            def generate():
+                collected_chunks = []
+                for chunk in response:
+                    if chunk.choices[0].delta.content:
+                        collected_chunks.append(chunk.choices[0].delta.content)
+                        yield chunk.choices[0].delta.content
+                
+                # 完整响应用于日志记录
+                full_response = "".join(collected_chunks)
+                logger.debug(f"Full response: {full_response}")
             
-            # 格式化答案
-            processed_answer = answer
-            logger.debug(f"Processed answer: {processed_answer}")
+            return Response(stream_with_context(generate()), mimetype='text/event-stream')
             
-            return jsonify({
-                'success': True,
-                'answer': processed_answer
-            })
         except Exception as api_error:
-            logger.error(f"DeepSeek API error: {str(api_error)}")
+            logger.error(f"Qwen API error: {str(api_error)}")
             return jsonify({
                 'success': False,
-                'error': f"DeepSeek API error: {str(api_error)}"
+                'error': f"Qwen API error: {str(api_error)}"
             }), 500
             
     except Exception as e:
