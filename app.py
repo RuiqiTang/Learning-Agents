@@ -75,7 +75,7 @@ def save_flashcards(original_filename, flashcards):
         # 保存到数据库
         for card in flashcards:
             flashcard_data = {
-                'source_file': original_filename,
+                'source_file': original_filename,  # 直接使用原始文件名，不加时间戳
                 'question': card['question'],
                 'answer': card['answer'],
                 'importance': card.get('importance', 3),
@@ -95,8 +95,7 @@ def save_flashcards(original_filename, flashcards):
         
         # 同时保存到JSON文件（保持向后兼容）
         base_name = os.path.splitext(original_filename)[0]
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        filename = f"{base_name}_{timestamp}_flashcards.json"
+        filename = f"{base_name}_flashcards.json"  # 移除时间戳
         filepath = os.path.join(FLASHCARDS_FOLDER, filename)
         
         with open(filepath, 'w', encoding='utf-8') as f:
@@ -296,6 +295,10 @@ def update_card_state():
         
         # 保存复习记录到数据库（同时会更新热力图）
         db.save_review_record(card_id, review_data)
+        
+        # 清理重复的闪卡
+        cleaned_count = db.cleanup_flashcards()
+        logger.info(f"Cleaned up {cleaned_count} duplicate flashcards after review")
         
         return jsonify({'success': True})
     except Exception as e:

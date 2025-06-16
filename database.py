@@ -407,17 +407,17 @@ class Database:
                 connection.close()
 
     def cleanup_flashcards(self):
-        """清理重复的闪卡，只保留最新版本"""
+        """清理重复的闪卡，根据question和answer去重，保留最新版本"""
         connection = None
         try:
             connection = self.connect()
             with connection.cursor() as cursor:
-                # 使用CTE找出每个(source_file, question, answer)组合的最新记录
+                # 使用CTE找出每个(question, answer)组合的最新记录
                 sql = """
                     WITH LatestCards AS (
-                        SELECT id, source_file, question, answer,
+                        SELECT id, question, answer,
                                ROW_NUMBER() OVER (
-                                   PARTITION BY source_file, question, answer
+                                   PARTITION BY question, answer
                                    ORDER BY updated_at DESC
                                ) as rn
                         FROM flashcards
