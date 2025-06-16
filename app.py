@@ -136,8 +136,71 @@ def generate_flashcards_stream(markdown_content, original_filename):
                 'data': '未找到现有闪卡，正在生成新的闪卡...'
             })
             
-            # 这里保留原有的生成闪卡的代码
-            # ... 原有的闪卡生成代码 ...
+            # 定义总步骤数和当前步骤
+            total_steps = 3
+            current_step = 0
+            
+            # 步骤1：Qwen正在回答
+            current_step += 1
+            yield json.dumps({
+                'type': 'progress',
+                'data': {
+                    'current': current_step,
+                    'total': total_steps,
+                    'currentStep': 'Qwen正在分析文本并生成答案...'
+                }
+            })
+            
+            # 调用Qwen生成闪卡
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的教育内容编辑器，擅长将文本转换为高质量的闪卡。"
+                    },
+                    {
+                        "role": "user",
+                        "content": f"请将以下文本转换为闪卡格式：\n\n{markdown_content}"
+                    }
+                ],
+                temperature=0.3
+            )
+            
+            # 步骤2：制作闪卡
+            current_step += 1
+            yield json.dumps({
+                'type': 'progress',
+                'data': {
+                    'current': current_step,
+                    'total': total_steps,
+                    'currentStep': '正在将答案转换为闪卡...'
+                }
+            })
+            
+            # 解析Qwen的回答并创建闪卡
+            flashcards_content = response.choices[0].message.content.strip()
+            flashcards = []  # 这里需要解析flashcards_content并创建闪卡列表
+            
+            # 步骤3：保存到数据库
+            current_step += 1
+            yield json.dumps({
+                'type': 'progress',
+                'data': {
+                    'current': current_step,
+                    'total': total_steps,
+                    'currentStep': '正在保存闪卡到数据库...'
+                }
+            })
+            
+            # 保存闪卡到数据库和JSON文件
+            filename = save_flashcards(original_filename, flashcards)
+            
+            yield json.dumps({
+                'type': 'result',
+                'data': flashcards,
+                'filename': filename
+            })
             
         else:
             # 获取所有相关的源文件
@@ -628,21 +691,58 @@ def update_card():
                     if not card:
                         raise ValueError("Card not found")
                     
-                    # 更新答案内容
-                    new_answer = card['answer'] + '\n\n补充内容：\n' + new_content
-                    sql = "UPDATE flashcards SET answer = %s WHERE id = %s"
-                    cursor.execute(sql, (new_answer, card_id))
-                    connection.commit()
+                    # 使用大模型整合答案
+                    prompt = f"""
+                    请将以下两段答案整合成一个完整、连贯的答案。
+                    保持所有的格式（包括Markdown格式、数学公式、代码块等），并确保内容的逻辑性和完整性。
+                    如果有重复的内容，请合并它们。如果有补充的内容，请适当地整合到相关位置。
                     
-                    # 获取更新后的卡片
-                    cursor.execute("SELECT * FROM flashcards WHERE id = %s", (card_id,))
-                    updated_card = cursor.fetchone()
+                    原始答案：
+                    {card['answer']}
                     
-                    return jsonify({
-                        'success': True,
-                        'message': '已补充到当前卡片',
-                        'card': updated_card
-                    })
+                    补充内容：
+                    {new_content}
+                    """
+                    
+                    try:
+                        response = client.chat.completions.create(
+                            model="deepseek-chat",
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": "你是一个专业的教育内容编辑器，擅长整合和优化教育内容。"
+                                },
+                                {
+                                    "role": "user",
+                                    "content": prompt
+                                }
+                            ],
+                            temperature=0.3
+                        )
+                        
+                        integrated_answer = response.choices[0].message.content.strip()
+                        
+                        # 更新答案内容
+                        sql = "UPDATE flashcards SET answer = %s WHERE id = %s"
+                        cursor.execute(sql, (integrated_answer, card_id))
+                        connection.commit()
+                        
+                        # 获取更新后的卡片
+                        cursor.execute("SELECT * FROM flashcards WHERE id = %s", (card_id,))
+                        updated_card = cursor.fetchone()
+                        
+                        return jsonify({
+                            'success': True,
+                            'message': '已整合并更新到当前卡片',
+                            'card': updated_card
+                        })
+                        
+                    except Exception as api_error:
+                        logger.error(f"DeepSeek API error: {str(api_error)}")
+                        return jsonify({
+                            'success': False,
+                            'error': f"整合答案失败: {str(api_error)}"
+                        }), 500
             finally:
                 connection.close()
         else:  # 'new'
@@ -774,6 +874,68 @@ def test_review_records():
     finally:
         if connection:
             connection.close()
+
+@app.route('/api/edit_answer', methods=['POST'])
+def edit_answer():
+    try:
+        data = request.json
+        original_answer = data.get('original_answer')
+        edit_instruction = data.get('edit_instruction')
+        
+        if not original_answer or not edit_instruction:
+            return jsonify({
+                'success': False,
+                'error': 'Missing original answer or edit instruction'
+            }), 400
+        
+        # 使用大模型编辑答案
+        prompt = f"""
+        请根据以下编辑指示修改答案。
+        保持所有的格式（包括Markdown格式、数学公式、代码块等），并确保内容的准确性。
+        
+        原始答案：
+        {original_answer}
+        
+        编辑指示：
+        {edit_instruction}
+        """
+        
+        try:
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的教育内容编辑器，擅长根据指示优化和修改内容。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                temperature=0.3
+            )
+            
+            edited_answer = response.choices[0].message.content.strip()
+            
+            return jsonify({
+                'success': True,
+                'edited_answer': edited_answer
+            })
+            
+        except Exception as api_error:
+            logger.error(f"DeepSeek API error: {str(api_error)}")
+            return jsonify({
+                'success': False,
+                'error': f"编辑答案失败: {str(api_error)}"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error in edit_answer: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 400
 
 if __name__ == '__main__':
     app.run(debug=True) 

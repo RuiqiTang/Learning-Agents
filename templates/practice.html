@@ -40,63 +40,12 @@
     <!-- 然后加载MathJax库 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.7/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
     
-    <script>
-        // 配置marked
-        window.onload = function() {
-            if (typeof marked === 'undefined') {
-                console.error('Marked library not loaded!');
-                return;
-            }
-            // 配置marked选项
-            marked.use({
-                breaks: true,  // 启用换行符支持
-                gfm: true,     // 启用GitHub风格的Markdown
-                pedantic: false,
-                mangle: false,
-                headerIds: false,
-                // 自定义渲染器
-                renderer: {
-                    paragraph(text) {
-                        // 如果段落只包含数学公式，不添加额外的p标签
-                        if (text.trim().startsWith('$') && text.trim().endsWith('$')) {
-                            return text + '\n';
-                        }
-                        return '<p>' + text + '</p>\n';
-                    },
-                    text(text) {
-                        // 处理数学公式周围的空格
-                        return text.replace(/\s*\$\s*/g, '$');
-                    }
-                }
-            });
-        };
-
-        // 更新renderMarkdown函数
-        function renderMarkdown(text) {
-            if (typeof marked === 'undefined') {
-                console.error('Marked library not loaded!');
-                return text;
-            }
-            try {
-                // 预处理文本
-                const processedText = text
-                    .replace(/\\n/g, '\n')  // 替换所有的\n为实际换行符
-                    .replace(/\n\n+/g, '\n\n')  // 将多个连续换行符替换为两个
-                    .replace(/\n/g, '  \n')  // 在每个换行符前添加两个空格，确保Markdown换行
-                    .trim();  // 移除首尾空白
-                
-                // 渲染Markdown
-                const renderedHtml = marked.parse(processedText);
-                
-                return renderedHtml;
-            } catch (error) {
-                console.error('Error rendering markdown:', error);
-                return text;
-            }
-        }
-    </script>
+    <!-- 加载highlight.js -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
     
     <style>
+        /* 基础样式 */
         body {
             font-family: Arial, sans-serif;
             max-width: 800px;
@@ -265,9 +214,36 @@
             padding: 15px;
             border-radius: 4px;
             margin: 10px 0;
+            min-height: 100px;
+            border: 1px solid #ddd;
+        }
+        .qa-answer[contenteditable="true"] {
+            outline: none;
+            cursor: text;
+        }
+        .qa-answer pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+        }
+        .qa-answer code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 85%;
+        }
+        .qa-answer pre code {
+            padding: 0;
+            background-color: transparent;
+            border-radius: 0;
+        }
+        .edit-buttons {
+            margin-top: 10px;
+            text-align: right;
             display: none;
         }
-        
+        .edit-buttons button {
+            margin-left: 10px;
+        }
         .qa-actions {
             display: none;
             margin-top: 10px;
@@ -313,6 +289,10 @@
         .loading-spinner {
             text-align: center;
             margin: 20px 0;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #e1e4e8;
         }
         .spinner {
             display: inline-block;
@@ -322,12 +302,694 @@
             border-top: 3px solid #3498db;
             border-radius: 50%;
             animation: spin 1s linear infinite;
+            margin-right: 10px;
+            vertical-align: middle;
         }
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        .loading-spinner span {
+            display: inline-block;
+            vertical-align: middle;
+            color: #666;
+            font-size: 14px;
+        }
+        /* 代码块样式优化 */
+        pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            margin: 1em 0;
+            border: 1px solid #e1e4e8;
+            position: relative;
+        }
+        
+        pre code.hljs {
+            background: none;
+            padding: 0;
+            margin: 0;
+            border: none;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre;
+            word-break: normal;
+            word-wrap: normal;
+            tab-size: 4;
+        }
+        
+        /* 行内代码样式 */
+        code:not(pre code) {
+            background-color: rgba(27,31,35,0.05);
+            border-radius: 3px;
+            padding: 0.2em 0.4em;
+            font-size: 85%;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+        
+        /* 数学公式容器样式 */
+        .math-container {
+            overflow-x: auto;
+            margin: 1em 0;
+            padding: 0.5em 0;
+        }
+        
+        /* 确保数学公式正确对齐 */
+        .MathJax_Display {
+            margin: 0.5em 0 !important;
+        }
+        
+        /* 优化qa-answer的样式 */
+        .qa-answer {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            word-wrap: break-word;
+            padding: 16px;
+            background-color: #ffffff;
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        
+        .qa-answer[contenteditable="true"] {
+            outline: 2px solid #0366d6;
+        }
+        
+        /* 添加编辑状态的视觉反馈 */
+        .qa-answer:focus {
+            outline: 2px solid #0366d6;
+            box-shadow: 0 0 0 3px rgba(3,102,214,0.3);
+        }
+
+        /* 代码相关样式 */
+        .inline-code {
+            background-color: rgba(27,31,35,0.05);
+            border-radius: 3px;
+            padding: 0.2em 0.4em;
+            font-size: 85%;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            color: #24292e;
+            margin: 0 0.2em;
+        }
+
+        /* 代码高亮样式 */
+        .hljs-comment,
+        .hljs-quote {
+            color: #6a737d;
+            font-style: italic;
+        }
+
+        .hljs-keyword,
+        .hljs-selector-tag,
+        .hljs-title,
+        .hljs-section,
+        .hljs-doctag,
+        .hljs-name,
+        .hljs-strong {
+            color: #d73a49;
+            font-weight: bold;
+        }
+
+        .hljs-string {
+            color: #032f62;
+        }
+
+        .hljs-number {
+            color: #005cc5;
+        }
+
+        .hljs-variable,
+        .hljs-template-variable,
+        .hljs-tag,
+        .hljs-name,
+        .hljs-selector-id,
+        .hljs-selector-class,
+        .hljs-regexp,
+        .hljs-deletion {
+            color: #22863a;
+        }
+        
+        /* 代码块样式 */
+        pre {
+            background-color: #f6f8fa;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            margin: 1em 0;
+            border: 1px solid #e1e4e8;
+            position: relative;
+        }
+        
+        pre code.hljs {
+            background: none;
+            padding: 0;
+            margin: 0;
+            border: none;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            white-space: pre;
+            word-break: normal;
+            word-wrap: normal;
+            tab-size: 4;
+        }
+        
+        /* 数学公式样式 */
+        .math-block {
+            overflow-x: auto;
+            margin: 1em 0;
+            padding: 0.5em;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .math-inline {
+            padding: 0 0.2em;
+            background-color: #f8f9fa;
+            border-radius: 2px;
+        }
+        
+        /* 确保公式正确对齐 */
+        .MathJax_Display {
+            margin: 0.5em 0 !important;
+        }
+        
+        .MathJax {
+            outline: 0;
+        }
+        
+        .generation-progress {
+            text-align: center;
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            border: 1px solid #e1e4e8;
+        }
+        
+        .progress-bar-container {
+            width: 100%;
+            height: 6px;
+            background-color: #e9ecef;
+            border-radius: 3px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .progress-bar-fill {
+            height: 100%;
+            background-color: #007bff;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        
+        .progress-text {
+            font-size: 14px;
+            color: #666;
+            margin: 5px 0;
+        }
+        
+        .progress-detail {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
     </style>
+    <script>
+        (function(window, document) {
+            'use strict';
+            
+            // Initialize global variables
+            window.flashcards = {{ flashcards|tojson|safe }};
+            window.filename = "{{ filename }}";
+            window.currentCardIndex = 0;
+            window.showingAnswer = false;
+            
+            // Configure marked when the window loads
+            window.onload = function() {
+                if (typeof marked === 'undefined') {
+                    console.error('Marked library not loaded!');
+                    return;
+                }
+
+                var renderer = new marked.Renderer();
+                
+                renderer.codespan = function(code) {
+                    return '<code class="inline-code">' + code + '</code>';
+                };
+                
+                renderer.code = function(code, language) {
+                    code = code.trim()
+                        .replace(/^\s+/gm, '')
+                        .replace(/\n{3,}/g, '\n\n');
+                    
+                    var validLanguage = hljs.getLanguage(language) ? language : 'plaintext';
+                    
+                    try {
+                        var highlighted = hljs.highlight(code, {
+                            language: validLanguage,
+                            ignoreIllegals: true
+                        }).value;
+                        
+                        return '<pre><code class="hljs language-' + validLanguage + '">' + highlighted + '</code></pre>';
+                    } catch (error) {
+                        console.error('Error highlighting code:', error);
+                        return '<pre><code class="hljs">' + code + '</code></pre>';
+                    }
+                };
+
+                marked.setOptions({
+                    renderer: renderer,
+                    gfm: true,
+                    breaks: true,
+                    pedantic: false,
+                    sanitize: false,
+                    smartLists: true,
+                    smartypants: true,
+                    xhtml: false
+                });
+                
+                // Initialize highlight.js
+                hljs.configure({
+                    tabReplace: '    ',
+                    languages: ['python', 'javascript', 'bash', 'cpp', 'java', 'json', 'markdown'],
+                    cssSelector: 'pre code'
+                });
+                
+                // Initialize syntax highlighting
+                document.querySelectorAll('pre code').forEach(function(block) {
+                    hljs.highlightBlock(block);
+                });
+            };
+
+            // Markdown rendering function
+            window.renderMarkdown = function(text) {
+                if (typeof marked === 'undefined') {
+                    console.error('Marked library not loaded!');
+                    return text;
+                }
+                
+                try {
+                    // 预处理文本，处理特殊情况
+                    var processedText = text
+                        // 处理代码块，确保正确的缩进和换行
+                        .replace(/```(\w+)?\s*([\s\S]*?)```/g, function(match, lang, code) {
+                            // 清理代码文本
+                            code = code
+                                .replace(/^\s+|\s+$/g, '')  // 移除开头和结尾的空白
+                                .replace(/\\n/g, '\n')      // 处理转义的换行符
+                                .replace(/\n\s*\n/g, '\n')  // 移除多余的空行
+                                .split('\n')                // 分割成行
+                                .map(function(line) {
+                                    return line.trim();     // 清理每行的空白
+                                })
+                                .join('\n');               // 重新组合
+
+                            // 返回处理后的代码块
+                            return '\n```' + (lang || '') + '\n' + code + '\n```\n';
+                        })
+                        // 处理行内代码
+                        .replace(/`([^`]+)`/g, function(match, code) {
+                            return '`' + code.trim() + '`';
+                        })
+                        // 处理数学公式
+                        .replace(/\$\$(.*?)\$\$/g, function(match, formula) {
+                            return '\n$$' + formula.trim() + '$$\n';
+                        })
+                        .replace(/\$(.*?)\$/g, function(match, formula) {
+                            return '$' + formula.trim() + '$';
+                        })
+                        .trim();
+
+                    // 配置 marked 选项
+                    marked.setOptions({
+                        gfm: true,
+                        breaks: true,
+                        pedantic: false,
+                        sanitize: false,
+                        smartLists: true,
+                        smartypants: true,
+                        xhtml: false,
+                        highlight: function(code, lang) {
+                            if (lang && hljs.getLanguage(lang)) {
+                                try {
+                                    return hljs.highlight(code, {
+                                        language: lang,
+                                        ignoreIllegals: true
+                                    }).value;
+                                } catch (err) {
+                                    console.error('Error highlighting code:', err);
+                                }
+                            }
+                            return hljs.highlightAuto(code).value;
+                        }
+                    });
+
+                    // 渲染 Markdown
+                    var renderedHtml = marked.parse(processedText);
+                    
+                    // 后处理：修复可能的格式问题
+                    renderedHtml = renderedHtml
+                        // 确保代码块有正确的类名
+                        .replace(/<pre><code class="language-(\w+)">/g, '<pre><code class="hljs language-$1">')
+                        // 确保数学公式周围有足够的空间
+                        .replace(/(<p>)?\s*(\$\$[\s\S]*?\$\$)\s*(<\/p>)?/g, '<div class="math-block">$2</div>')
+                        .replace(/(<p>)?\s*(\$[\s\S]*?\$)\s*(<\/p>)?/g, '<span class="math-inline">$2</span>');
+
+                    return renderedHtml;
+                } catch (error) {
+                    console.error('Error rendering markdown:', error);
+                    return text;
+                }
+            };
+            
+            // Update progress function
+            window.updateProgress = function() {
+                var cards = document.querySelectorAll('.card');
+                var total = cards.length;
+                var current = window.currentCardIndex + 1;
+                
+                document.getElementById('currentCard').textContent = Math.min(current, total);
+                document.getElementById('totalCards').textContent = total;
+                
+                var progressBar = document.querySelector('.progress-bar .progress');
+                if (progressBar) {
+                    var percentage = Math.min((current / total) * 100, 100);
+                    progressBar.style.width = percentage + '%';
+                }
+            };
+            
+            // Show answer function
+            window.showAnswer = function(btn) {
+                if (!btn) return;
+                
+                var card = btn.closest('.card');
+                if (!card) return;
+                
+                var answerElement = card.querySelector('.answer');
+                var difficultyBtns = card.querySelectorAll('.difficulty-btn');
+                var qaSection = card.querySelector('.qa-section');
+                
+                if (answerElement) {
+                    answerElement.style.display = 'block';
+                    MathJax.Hub.Queue(['Typeset', MathJax.Hub, answerElement]);
+                }
+                
+                if (difficultyBtns) {
+                    difficultyBtns.forEach(function(btn) {
+                        btn.style.display = 'inline-block';
+                    });
+                }
+
+                if (qaSection) {
+                    qaSection.style.display = 'block';
+                }
+                
+                btn.style.display = 'none';
+            };
+            
+            // Record difficulty function
+            window.recordDifficulty = function(difficulty, btn) {
+                var card = btn.closest('.card');
+                var cardId = card.dataset.id;
+                var cardIndex = parseInt(card.dataset.index);
+                
+                var interval = 0;
+                var easeFactor = parseFloat(card.dataset.easeFactor || 2.5);
+                
+                switch(difficulty) {
+                    case 'hard':
+                        interval = 1;
+                        easeFactor = Math.max(1.3, easeFactor - 0.2);
+                        break;
+                    case 'medium':
+                        interval = 3;
+                        break;
+                    case 'easy':
+                        interval = 7;
+                        easeFactor = easeFactor + 0.1;
+                        break;
+                }
+
+                var now = new Date();
+                var nextReview = new Date(now);
+                nextReview.setDate(nextReview.getDate() + interval);
+                
+                fetch('/api/update_card_state', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        card_id: cardId,
+                        review_data: {
+                            next_review: nextReview.toISOString().slice(0, 19).replace('T', ' '),
+                            difficulty: difficulty,
+                            ease_factor: easeFactor,
+                            interval: interval
+                        }
+                    })
+                })
+                .then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('Failed to update card state');
+                    }
+                    return response.json();
+                })
+                .then(function() {
+                    window.currentCardIndex++;
+                    window.updateProgress();
+                    
+                    var currentCard = document.querySelector('.card[data-index="' + cardIndex + '"]');
+                    var nextCard = document.querySelector('.card[data-index="' + (cardIndex + 1) + '"]');
+                    
+                    if (currentCard) {
+                        currentCard.style.display = 'none';
+                    }
+                    
+                    if (nextCard) {
+                        nextCard.style.display = 'block';
+                        MathJax.Hub.Queue(['Typeset', MathJax.Hub, nextCard]);
+                    } else {
+                        alert('恭喜！你已完成所有闪卡复习。');
+                        window.location.href = '/';
+                    }
+                })
+                .catch(function(error) {
+                    console.error('Error updating card state:', error);
+                    window.showError('更新卡片状态失败: ' + error.message);
+                });
+            };
+            
+            // Error handling function
+            window.showError = function(message) {
+                var errorElement = document.querySelector('.error-message');
+                errorElement.textContent = message;
+                errorElement.style.display = 'block';
+                console.error('Error:', message);
+            };
+            
+            // Ask DeepSeek function
+            window.askDeepSeek = function(btn) {
+                var card = btn.closest('.card');
+                var question = card.querySelector('.qa-input').value.trim();
+                if (!question) {
+                    window.showError('请输入问题');
+                    return;
+                }
+
+                var context = {
+                    question: card.querySelector('.question').innerHTML,
+                    answer: card.querySelector('.answer').innerHTML
+                };
+
+                var loadingSpinner = card.querySelector('.loading-spinner');
+                var qaAnswer = card.querySelector('.qa-answer');
+                var qaActions = card.querySelector('.qa-actions');
+                var editButtons = card.querySelector('.edit-buttons');
+                var startTime = Date.now();
+                var timerElement = loadingSpinner.querySelector('span');
+                var timerInterval;
+                
+                // Show loading spinner and start timer
+                loadingSpinner.style.display = 'block';
+                qaAnswer.style.display = 'none';
+                qaActions.style.display = 'none';
+                editButtons.style.display = 'none';
+                
+                // Update timer every second
+                timerInterval = setInterval(function() {
+                    var elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+                    timerElement.textContent = '思考中... (' + elapsedSeconds + ' 秒)';
+                }, 1000);
+
+                fetch('/api/ask_deepseek', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question: question,
+                        context: '问题：' + context.question + '\n\n答案：' + context.answer
+                    })
+                })
+                .then(function(response) {
+                    if (!response.ok) {
+                        throw new Error('请求失败');
+                    }
+                    return response.json();
+                })
+                .then(function(data) {
+                    // Clear timer
+                    clearInterval(timerInterval);
+                    
+                    if (!data.success) {
+                        throw new Error(data.error || '获取答案失败');
+                    }
+
+                    // Hide loading spinner
+                    loadingSpinner.style.display = 'none';
+                    
+                    // Render answer content
+                    qaAnswer.innerHTML = window.renderMarkdown(data.answer);
+                    
+                    // Highlight code blocks
+                    qaAnswer.querySelectorAll('pre code').forEach(function(block) {
+                        var language = block.className.replace('language-', '');
+                        
+                        var code = block.textContent
+                            .replace(/\\n/g, '\n')
+                            .replace(/\\\\/g, '\\')
+                            .trim();
+                        
+                        try {
+                            var highlighted = hljs.highlight(code, {
+                                language: language || 'plaintext',
+                                ignoreIllegals: true
+                            }).value;
+                            
+                            block.innerHTML = highlighted;
+                        } catch (error) {
+                            console.error('Error highlighting code block:', error);
+                        }
+                    });
+                    
+                    // Handle inline code
+                    qaAnswer.querySelectorAll('code:not(.hljs)').forEach(function(inlineCode) {
+                        inlineCode.className = 'inline-code';
+                    });
+                    
+                    // Render math formulas
+                    MathJax.Hub.Queue(['Typeset', MathJax.Hub, qaAnswer]);
+                    
+                    // Show answer and buttons
+                    qaAnswer.style.display = 'block';
+                    qaActions.style.display = 'block';
+                    editButtons.style.display = 'block';
+                    
+                    // Save original content
+                    qaAnswer.dataset.originalContent = qaAnswer.innerHTML;
+                })
+                .catch(function(error) {
+                    // Clear timer
+                    clearInterval(timerInterval);
+                    
+                    console.error('Error in askDeepSeek:', error);
+                    window.showError('提问失败: ' + error.message);
+                    loadingSpinner.style.display = 'none';
+                    timerElement.textContent = '思考中...';
+                });
+            };
+            
+            // 更新生成进度的函数
+            window.updateGenerationProgress = function(data) {
+                var container = document.querySelector('.generation-progress');
+                if (!container) {
+                    container = document.createElement('div');
+                    container.className = 'generation-progress';
+                    document.querySelector('.container').insertBefore(
+                        container,
+                        document.querySelector('.stats')
+                    );
+                    
+                    // 添加进度条和文本元素
+                    container.innerHTML = `
+                        <div class="progress-text">正在生成闪卡...</div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill"></div>
+                        </div>
+                        <div class="progress-detail"></div>
+                    `;
+                }
+                
+                var progressBar = container.querySelector('.progress-bar-fill');
+                var progressText = container.querySelector('.progress-text');
+                var progressDetail = container.querySelector('.progress-detail');
+                
+                // 更新进度
+                if (data.total > 0) {
+                    var percentage = (data.current / data.total) * 100;
+                    progressBar.style.width = percentage + '%';
+                    progressText.textContent = '正在生成闪卡... ' + Math.round(percentage) + '%';
+                    progressDetail.textContent = '已生成 ' + data.current + ' / ' + data.total + ' 张卡片';
+                    
+                    // 添加当前步骤的描述
+                    if (data.currentStep) {
+                        progressDetail.textContent += ' - ' + data.currentStep;
+                    }
+                }
+                
+                // 如果生成完成
+                if (data.current >= data.total) {
+                    setTimeout(function() {
+                        container.style.display = 'none';
+                    }, 1000);
+                }
+            };
+            
+            // 处理服务器发送的事件
+            window.handleServerEvent = function(event) {
+                var data = JSON.parse(event.data);
+                
+                switch(data.type) {
+                    case 'status':
+                        // 显示状态消息
+                        document.querySelector('.progress-text').textContent = data.data;
+                        break;
+                        
+                    case 'progress':
+                        // 更新进度条
+                        window.updateGenerationProgress(data.data);
+                        break;
+                        
+                    case 'result':
+                        // 处理结果
+                        window.flashcards = data.data;
+                        window.filename = data.filename;
+                        
+                        // 隐藏进度显示
+                        document.querySelector('.generation-progress').style.display = 'none';
+                        
+                        // 显示结果
+                        if (data.message) {
+                            document.querySelector('.progress-text').textContent = data.message;
+                        }
+                        break;
+                        
+                    case 'error':
+                        // 显示错误消息
+                        window.showError(data.data);
+                        document.querySelector('.generation-progress').style.display = 'none';
+                        break;
+                }
+            };
+            
+        })(window, document);
+    </script>
 </head>
 <body>
     <div class="container">
@@ -350,8 +1012,8 @@
 
             {% for card in flashcards %}
             <div class="card" style="display: {% if loop.index0 == 0 %}block{% else %}none{% endif %};" data-index="{{ loop.index0 }}" data-id="{{ card.id }}">
-                <div class="question">{{ card.question|safe }}</div>
-                <div class="answer">{{ card.answer|safe }}</div>
+                <div class="question markdown-body">{{ card.question|safe }}</div>
+                <div class="answer markdown-body">{{ card.answer|safe }}</div>
                 <div class="buttons">
                     <button class="button show-answer" onclick="showAnswer(this)">显示答案</button>
                     <button class="button difficulty-btn easy" onclick="recordDifficulty('easy', this)">简单</button>
@@ -363,9 +1025,13 @@
                     <button class="button btn-ask" onclick="askDeepSeek(this)">向DeepSeek提问</button>
                     <div class="loading-spinner" style="display: none;">
                         <div class="spinner"></div>
-                        <span>正在思考中...</span>
+                        <span>思考中...</span>
                     </div>
-                    <div class="qa-answer"></div>
+                    <div class="qa-answer" contenteditable="true"></div>
+                    <div class="edit-buttons">
+                        <button class="button btn-cancel" onclick="cancelEdit(this)">取消</button>
+                        <button class="button btn-save" onclick="saveEdit(this)">保存</button>
+                    </div>
                     <div class="qa-actions" style="display: none;">
                         <button class="button btn-append" onclick="updateCard('append', this)">补充到当前卡片</button>
                         <button class="button btn-new" onclick="updateCard('new', this)">创建新卡片</button>
@@ -374,523 +1040,14 @@
             </div>
             {% endfor %}
         </div>
+        
+        <div class="generation-progress" style="display: none;">
+            <div class="progress-text">正在生成闪卡...</div>
+            <div class="progress-bar-container">
+                <div class="progress-bar-fill"></div>
+            </div>
+            <div class="progress-detail"></div>
+        </div>
     </div>
-
-    <script>
-        let flashcards = {{ flashcards|tojson|safe }};
-        const filename = "{{ filename }}";
-        let currentCardIndex = 0;
-        let showingAnswer = false;
-
-        // SM-2 算法参数
-        const AGAIN_INTERVAL = 1; // 1分钟
-        const HARD_INTERVAL = 3; // 3天
-        const GOOD_INTERVAL = 7; // 1周
-        const EASY_INTERVAL = 14; // 2周
-
-        function updateProgress() {
-            const cards = document.querySelectorAll('.card');
-            const total = cards.length;
-            const current = currentCardIndex + 1;
-            
-            // 更新进度文本
-            document.getElementById('currentCard').textContent = Math.min(current, total);
-            document.getElementById('totalCards').textContent = total;
-            
-            // 更新进度条
-            const progressBar = document.querySelector('.progress-bar .progress');
-            if (progressBar) {
-                const percentage = Math.min((current / total) * 100, 100);
-                progressBar.style.width = `${percentage}%`;
-            }
-        }
-
-        // 等待MathJax加载完成
-        function waitForMathJax() {
-            return new Promise((resolve, reject) => {
-                if (window.MathJax && window.MathJax.Hub) {
-                    resolve();
-                } else {
-                    // 检查MathJax是否在10秒内加载
-                    let attempts = 0;
-                    const interval = setInterval(() => {
-                        if (window.MathJax && window.MathJax.Hub) {
-                            clearInterval(interval);
-                            resolve();
-                        } else if (attempts >= 20) { // 20 * 500ms = 10s
-                            clearInterval(interval);
-                            reject(new Error('MathJax failed to load'));
-                        }
-                        attempts++;
-                    }, 500);
-                }
-            });
-        }
-
-        // 渲染数学公式
-        async function renderMathJax(element) {
-            try {
-                await waitForMathJax();
-                return new Promise((resolve) => {
-                    MathJax.Hub.Queue(
-                        ["Typeset", MathJax.Hub, element],
-                        resolve
-                    );
-                });
-            } catch (error) {
-                console.error('Error rendering MathJax:', error);
-                showError('数学公式渲染失败，请刷新页面重试');
-            }
-        }
-
-        async function showCard() {
-            if (currentCardIndex >= flashcards.length) {
-                alert('恭喜！你已完成所有闪卡复习。');
-                window.location.href = '/';  // 返回主页
-                return;
-            }
-
-            const card = flashcards[currentCardIndex];
-            console.log('Showing card:', card);
-            
-            try {
-                // 确保问题和答案是字符串
-                const question = String(card.question).trim();
-                const answer = String(card.answer).trim();
-                
-                console.log('Processing question:', question);
-                console.log('Processing answer:', answer);
-
-                // 使用renderMarkdown函数渲染Markdown
-                const questionHtml = renderMarkdown(question);
-                const answerHtml = renderMarkdown(answer);
-                
-                // 更新DOM
-                const questionElement = document.querySelector('.card .question');
-                const answerElement = document.querySelector('.card .answer');
-                
-                if (!questionElement || !answerElement) {
-                    throw new Error('找不到问题或答案元素');
-                }
-                
-                questionElement.innerHTML = questionHtml;
-                answerElement.innerHTML = answerHtml;
-                
-                // 重置显示状态
-                answerElement.style.display = 'none';
-                
-                // 获取当前卡片的按钮
-                const showAnswerBtn = questionElement.closest('.card').querySelector('.show-answer');
-                const difficultyBtns = questionElement.closest('.card').querySelectorAll('.difficulty-btn');
-                
-                if (showAnswerBtn) {
-                    showAnswerBtn.style.display = 'block';
-                }
-                
-                if (difficultyBtns) {
-                    difficultyBtns.forEach(btn => btn.style.display = 'none');
-                }
-
-                updateProgress();
-                
-                // 渲染数学公式
-                console.log('Rendering MathJax for question');
-                await renderMathJax(questionElement);
-                console.log('Rendering MathJax for answer');
-                await renderMathJax(answerElement);
-                
-            } catch (error) {
-                console.error('Error in showCard:', error);
-                showError('显示闪卡时出错: ' + error.message);
-            }
-        }
-
-        async function showAnswer(btn) {
-            if (!btn) return;
-            
-            const card = btn.closest('.card');
-            if (!card) return;
-            
-            const answerElement = card.querySelector('.answer');
-            const difficultyBtns = card.querySelectorAll('.difficulty-btn');
-            const qaSection = card.querySelector('.qa-section');
-            
-            if (answerElement) {
-                answerElement.style.display = 'block';
-                // 重新渲染答案中的数学公式
-                await renderMathJax(answerElement);
-            }
-            
-            if (difficultyBtns) {
-                difficultyBtns.forEach(btn => btn.style.display = 'inline-block');
-            }
-
-            if (qaSection) {
-                qaSection.style.display = 'block';
-            }
-            
-            btn.style.display = 'none';
-        }
-
-        async function gradeCard(difficulty, cardIndex) {
-            const card = document.querySelector(`.card[data-index="${cardIndex}"]`);
-            if (!card) {
-                console.error('Card not found');
-                return;
-            }
-            
-            const cardId = card.dataset.id;
-            
-            try {
-                const response = await fetch('/api/update_card_state', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        card_id: cardId,
-                        review_data: {
-                            difficulty: difficulty,
-                            interval: parseInt(card.dataset.interval || '0'),
-                            ease_factor: parseFloat(card.dataset.easeFactor || '2.5')
-                        }
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to update card state');
-                }
-
-                // 更新进度
-                currentCardIndex++;
-                updateProgress();
-
-                // 隐藏当前卡片，显示下一张
-                const currentCard = document.querySelector(`.card[data-index="${cardIndex}"]`);
-                const nextCard = document.querySelector(`.card[data-index="${cardIndex + 1}"]`);
-                
-                if (currentCard) {
-                    currentCard.style.display = 'none';
-                }
-                
-                if (nextCard) {
-                    nextCard.style.display = 'block';
-                    // 重新渲染下一张卡片的数学公式
-                    await renderMathJax(nextCard);
-                } else {
-                    // 所有卡片都已复习完
-                    alert('恭喜！你已完成所有闪卡复习。');
-                    window.location.href = '/';
-                }
-            } catch (error) {
-                console.error('Error updating card state:', error);
-                showError('更新卡片状态失败: ' + error.message);
-            }
-        }
-
-        async function askDeepSeek(btn) {
-            const card = btn.closest('.card');
-            const question = card.querySelector('.qa-input').value.trim();
-            if (!question) {
-                showError('请输入问题');
-                return;
-            }
-
-            const context = {
-                question: card.querySelector('.question').innerHTML,
-                answer: card.querySelector('.answer').innerHTML
-            };
-
-            // 显示加载动画
-            const loadingSpinner = card.querySelector('.loading-spinner');
-            const qaAnswer = card.querySelector('.qa-answer');
-            const qaActions = card.querySelector('.qa-actions');
-            
-            loadingSpinner.style.display = 'block';
-            qaAnswer.style.display = 'none';
-            qaActions.style.display = 'none';
-
-            try {
-                const response = await fetch('/api/ask_deepseek', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        question: question,
-                        context: `问题：${context.question}\n\n答案：${context.answer}`
-                    })
-                });
-
-                const data = await response.json();
-                if (!data.success) {
-                    throw new Error(data.error);
-                }
-
-                // 隐藏加载动画，显示答案
-                loadingSpinner.style.display = 'none';
-                qaAnswer.innerHTML = renderMarkdown(data.answer);
-                await renderMathJax(qaAnswer);
-                
-                qaAnswer.style.display = 'block';
-                qaActions.style.display = 'block';
-            } catch (error) {
-                console.error('Error in askDeepSeek:', error);
-                showError('提问失败: ' + error.message);
-                loadingSpinner.style.display = 'none';
-            }
-        }
-
-        async function updateCard(type, btn) {
-            const card = btn.closest('.card');
-            const cardId = card.dataset.id;
-            const question = card.querySelector('.qa-input').value.trim();
-            const answer = card.querySelector('.qa-answer').innerHTML;
-
-            try {
-                const response = await fetch('/api/update_card', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        card_id: cardId,
-                        update_type: type,
-                        content: answer,
-                        question: question
-                    })
-                });
-
-                const data = await response.json();
-                if (!data.success) {
-                    throw new Error(data.error || '更新失败');
-                }
-
-                // 清理提问界面
-                card.querySelector('.qa-input').value = '';
-                card.querySelector('.qa-answer').innerHTML = '';
-                card.querySelector('.qa-answer').style.display = 'none';
-                card.querySelector('.qa-actions').style.display = 'none';
-
-                if (type === 'append') {
-                    // 更新当前卡片的答案
-                    const answerElement = card.querySelector('.answer');
-                    answerElement.innerHTML = data.card.answer;
-                    await renderMathJax(answerElement);
-                    showSuccess('已补充到当前卡片');
-                } else {
-                    // 创建新卡片后显示成功消息
-                    showSuccess('已创建新卡片');
-                    
-                    // 可选：将新卡片添加到当前卡片列表
-                    const newCard = createCardElement(data.card);
-                    card.parentNode.appendChild(newCard);
-                }
-            } catch (error) {
-                console.error('Error in updateCard:', error);
-                showError('更新失败: ' + error.message);
-            }
-        }
-
-        // 创建新卡片元素的辅助函数
-        function createCardElement(cardData) {
-            const div = document.createElement('div');
-            div.className = 'card';
-            div.style.display = 'none';  // 新卡片默认隐藏
-            div.dataset.id = cardData.id;
-            div.dataset.index = document.querySelectorAll('.card').length;
-
-            div.innerHTML = `
-                <div class="question">${cardData.question}</div>
-                <div class="answer" style="display: none;">${cardData.answer}</div>
-                <div class="buttons">
-                    <button class="button show-answer" onclick="showAnswer(this)">显示答案</button>
-                    <button class="button difficulty-btn easy" onclick="recordDifficulty('easy', this)">简单</button>
-                    <button class="button difficulty-btn medium" onclick="recordDifficulty('medium', this)">一般</button>
-                    <button class="button difficulty-btn hard" onclick="recordDifficulty('hard', this)">困难</button>
-                </div>
-                <div class="qa-section" style="display: none;">
-                    <textarea class="qa-input" placeholder="输入你的问题..." rows="3"></textarea>
-                    <button class="button btn-ask" onclick="askDeepSeek(this)">向DeepSeek提问</button>
-                    <div class="loading-spinner" style="display: none;">
-                        <div class="spinner"></div>
-                        <span>正在思考中...</span>
-                    </div>
-                    <div class="qa-answer"></div>
-                    <div class="qa-actions" style="display: none;">
-                        <button class="button btn-append" onclick="updateCard('append', this)">补充到当前卡片</button>
-                        <button class="button btn-new" onclick="updateCard('new', this)">创建新卡片</button>
-                    </div>
-                </div>
-            `;
-
-            return div;
-        }
-
-        function showError(message) {
-            const errorElement = document.querySelector('.error-message');
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
-            console.error('Error:', message);
-        }
-
-        function showSuccess(message) {
-            const successElement = document.createElement('div');
-            successElement.className = 'success-message';
-            successElement.style.cssText = `
-                color: #28a745;
-                padding: 10px;
-                margin: 10px 0;
-                border: 1px solid #28a745;
-                border-radius: 4px;
-                display: block;
-            `;
-            successElement.textContent = message;
-            
-            // 移除旧的成功消息
-            const oldSuccess = document.querySelector('.success-message');
-            if (oldSuccess) {
-                oldSuccess.remove();
-            }
-            
-            // 添加新的成功消息
-            document.querySelector('.container').insertBefore(
-                successElement,
-                document.querySelector('.stats')
-            );
-            
-            // 3秒后自动消失
-            setTimeout(() => {
-                successElement.remove();
-            }, 3000);
-        }
-
-        // 在页面加载时检查数据
-        window.addEventListener('DOMContentLoaded', async function() {
-            console.log('Page loaded, checking dependencies...');
-            
-            // 检查marked
-            if (typeof marked === 'undefined') {
-                console.error('Marked library not loaded!');
-                showError('Markdown渲染器未加载，请刷新页面重试');
-                return;
-            }
-            
-            console.log('Marked library loaded successfully');
-            
-            // 等待MathJax加载
-            try {
-                await waitForMathJax();
-                console.log('MathJax loaded successfully');
-            } catch (error) {
-                console.error('MathJax failed to load:', error);
-                showError('数学公式渲染器加载失败，请刷新页面重试');
-                return;
-            }
-
-            // 检查是否有卡片数据
-            const cards = document.querySelectorAll('.card');
-            if (!cards || cards.length === 0) {
-                showError('没有找到闪卡数据');
-                return;
-            }
-            
-            // 初始化第一张卡片
-            const firstCard = cards[0];
-            if (firstCard) {
-                const questionElement = firstCard.querySelector('.question');
-                const answerElement = firstCard.querySelector('.answer');
-                
-                if (questionElement && answerElement) {
-                    // 渲染第一张卡片的数学公式
-                    await renderMathJax(questionElement);
-                    await renderMathJax(answerElement);
-                }
-            }
-            
-            // 更新进度
-            updateProgress();
-        });
-
-        async function recordDifficulty(difficulty, btn) {
-            const card = btn.closest('.card');
-            const cardId = card.dataset.id;
-            const cardIndex = parseInt(card.dataset.index);
-            
-            // 计算新的间隔和难度系数
-            let interval = 0;
-            let easeFactor = parseFloat(card.dataset.easeFactor || 2.5);
-            
-            switch(difficulty) {
-                case 'hard':
-                    interval = 1; // 1天后复习
-                    easeFactor = Math.max(1.3, easeFactor - 0.2);
-                    break;
-                case 'medium':
-                    interval = 3; // 3天后复习
-                    break;
-                case 'easy':
-                    interval = 7; // 7天后复习
-                    easeFactor = easeFactor + 0.1;
-                    break;
-            }
-
-            const now = new Date();
-            const nextReview = new Date(now);
-            nextReview.setDate(nextReview.getDate() + interval);
-
-            // 格式化日期为MySQL datetime格式
-            const formatDate = (date) => {
-                return date.toISOString().slice(0, 19).replace('T', ' ');
-            };
-
-            try {
-                const response = await fetch('/api/update_card_state', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        card_id: cardId,
-                        review_data: {
-                            next_review: formatDate(nextReview),
-                            difficulty: difficulty,
-                            ease_factor: easeFactor,
-                            interval: interval
-                        }
-                    })
-                });
-
-                if (!response.ok) {
-                    throw new Error('Failed to update card state');
-                }
-
-                // 更新进度
-                currentCardIndex++;
-                updateProgress();
-
-                // 隐藏当前卡片，显示下一张
-                const currentCard = document.querySelector(`.card[data-index="${cardIndex}"]`);
-                const nextCard = document.querySelector(`.card[data-index="${cardIndex + 1}"]`);
-                
-                if (currentCard) {
-                    currentCard.style.display = 'none';
-                }
-                
-                if (nextCard) {
-                    nextCard.style.display = 'block';
-                    // 重新渲染下一张卡片的数学公式
-                    await renderMathJax(nextCard);
-                } else {
-                    // 所有卡片都已复习完
-                    alert('恭喜！你已完成所有闪卡复习。');
-                    window.location.href = '/';
-                }
-            } catch (error) {
-                console.error('Error updating card state:', error);
-                showError('更新卡片状态失败: ' + error.message);
-            }
-        }
-    </script>
 </body>
 </html> 

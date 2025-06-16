@@ -585,7 +585,7 @@ class Database:
                 # 将当前时间添加到参数列表
                 params.append(now)
                 
-                # 构建SQL查询
+                # 构建SQL查询，添加RAND()函数进行随机排序
                 sql = f"""
                     WITH LatestCards AS (
                         SELECT f.id, f.source_file, f.question, f.answer, f.updated_at,
@@ -619,11 +619,7 @@ class Database:
                         r.next_review IS NULL  -- 从未复习过的卡片
                         OR r.next_review <= %s  -- 已经到期的卡片
                     )
-                    ORDER BY 
-                        CASE 
-                            WHEN r.next_review IS NULL THEN f.updated_at  -- 新卡片按更新时间排序
-                            ELSE r.next_review  -- 复习卡片按到期时间排序
-                        END ASC
+                    ORDER BY RAND()  -- 随机排序
                 """
                 
                 # 执行查询
