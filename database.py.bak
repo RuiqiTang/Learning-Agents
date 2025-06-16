@@ -154,9 +154,11 @@ class Database:
                 
                 if not exists:
                     # 插入新卡片
-                    sql = """INSERT INTO flashcards 
+                    sql = """
+                        INSERT INTO flashcards 
                         (source_file, question, answer, importance, probability)
-                        VALUES (%s, %s, %s, %s, %s)"""
+                        VALUES (%s, %s, %s, %s, %s)
+                    """
                     cursor.execute(sql, (
                         flashcard_data['source_file'],
                         flashcard_data['question'],
@@ -167,12 +169,14 @@ class Database:
                     flashcard_id = cursor.lastrowid
                 else:
                     # 更新现有卡片
-                    sql = """UPDATE flashcards 
+                    sql = """
+                        UPDATE flashcards 
                         SET answer = %s,
                             importance = %s,
                             probability = %s,
                             updated_at = CURRENT_TIMESTAMP
-                        WHERE id = %s"""
+                        WHERE id = %s
+                    """
                     cursor.execute(sql, (
                         flashcard_data['answer'],
                         flashcard_data.get('importance', 3),
@@ -183,9 +187,11 @@ class Database:
                 
                 # 如果有学习状态，创建复习记录
                 if 'last_review' in flashcard_data and flashcard_data['last_review']:
-                    sql = """INSERT INTO review_records 
+                    sql = """
+                        INSERT INTO review_records 
                         (flashcard_id, review_date, next_review, difficulty, ease_factor, review_interval)
-                        VALUES (%s, %s, %s, %s, %s, %s)"""
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """
                     cursor.execute(sql, (
                         flashcard_id,
                         flashcard_data['last_review'],

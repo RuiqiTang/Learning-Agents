@@ -53,5 +53,9 @@ def get_next_review_date(difficulty: str, current_interval: int, ease_factor: fl
         tuple: (下次复习日期, 新的间隔天数, 新的难度系数)
     """
     new_interval, new_ease_factor = calculate_next_interval(difficulty, current_interval, ease_factor)
-    next_review = datetime.now() + timedelta(days=new_interval)
+    if difficulty in ['again', 'hard']:
+        next_review = datetime.now() + timedelta(minutes=5)
+        # 这里 new_interval 仍然返回原算法的天数，但实际下次复习时间是5分钟后
+    else:
+        next_review = datetime.now() + timedelta(days=new_interval)
     return next_review, new_interval, new_ease_factor

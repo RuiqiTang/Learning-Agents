@@ -609,8 +609,13 @@
             loadingSpinner.style.display = 'block';
             qaAnswer.style.display = 'none';
             qaActions.style.display = 'none';
+            qaAnswer.innerHTML = ''; // 清空之前的回答
 
             try {
+                // 设置超时
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+
                 const response = await fetch('/api/ask_deepseek', {
                     method: 'POST',
                     headers: {
@@ -619,24 +624,45 @@
                     body: JSON.stringify({
                         question: question,
                         context: `问题：${context.question}\n\n答案：${context.answer}`
-                    })
+                    }),
+                    signal: controller.signal
                 });
 
-                const data = await response.json();
-                if (!data.success) {
-                    throw new Error(data.error);
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
 
-                // 隐藏加载动画，显示答案
+                // 处理流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let answerText = '';
+
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value);
+                    answerText += chunk;
+                    
+                    // 实时更新回答内容
+                    qaAnswer.innerHTML = renderMarkdown(answerText);
+                    await renderMathJax(qaAnswer);
+                }
+
+                // 隐藏加载动画，显示答案和操作按钮
                 loadingSpinner.style.display = 'none';
-                qaAnswer.innerHTML = renderMarkdown(data.answer);
-                await renderMathJax(qaAnswer);
-                
                 qaAnswer.style.display = 'block';
                 qaActions.style.display = 'block';
+
             } catch (error) {
                 console.error('Error in askDeepSeek:', error);
-                showError('提问失败: ' + error.message);
+                if (error.name === 'AbortError') {
+                    showError('请求超时，请重试');
+                } else {
+                    showError('提问失败: ' + error.message);
+                }
                 loadingSpinner.style.display = 'none';
             }
         }
